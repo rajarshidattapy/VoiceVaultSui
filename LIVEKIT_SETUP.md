@@ -111,3 +111,16 @@ VoiceVault backend  /api/tts/generate
 ```
 
 Each deployed agent gets its own room name (`vv-<agent-id>`). The agent worker joins that room and handles audio in real time.
+
+ docs/LIVEKIT_SETUP.md — step-by-step guide covering:
+  1. Create a LiveKit Cloud project and copy the 3 credentials                                                                                                                                      
+  2. Add them to .env
+  3. Install livekit-api + livekit-agents                                                                                                                                                           
+  4. Deploy from the UI and run the agent worker start command                                                                                                                                    
+  5. Troubleshooting table (common errors + fixes)
+  6. Architecture diagram showing the full call path
+
+  .env.example — added three new sections:
+  - LIVEKIT — URL, API key, API secret with a pointer to the setup guide
+  - LLM PROVIDERS — OpenAI, Anthropic, Gemini, Groq keys
+  - x402 PAY-PER-USE — default price and uses config
