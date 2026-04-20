@@ -1,4 +1,4 @@
-# LiveKit Setup for VoiceVault
+# LiveKit Setup
 
 Voice agents on VoiceVault use LiveKit for real-time audio rooms. This guide gets you from zero to a working agent call.
 
