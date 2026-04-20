@@ -18,6 +18,7 @@ backend/data
 backend/storage/
 frontend/package-lock.json
 
+.issue/
 
 # Editor directories and files
 .vscode/*
