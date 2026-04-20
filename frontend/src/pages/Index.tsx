@@ -10,8 +10,8 @@ const Index = () => {
   return (
     <>
       <Helmet>
-        <title>VoiceVault - Own Your Voice, Earn Forever | AI Voice Cloning Platform</title>
-        <meta name="description" content="Create custom AI voice models, mint on-chain ownership on Sui blockchain, and earn every time someone uses your voice for TTS generation." />
+        <title>VoiceVault - Own Your Voice. Deploy Your Agent. Earn Forever.</title>
+        <meta name="description" content="Train a custom AI voice model, mint on-chain ownership on Sui, deploy a LiveKit voice agent, and earn per call — via full licenses or x402 micropayments." />
       </Helmet>
       <div className="min-h-screen bg-background">
         <Navbar />

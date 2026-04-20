@@ -1,40 +1,46 @@
-import { Mic, Brain, Shield, Coins, Zap, Globe } from "lucide-react";
+import { Mic, Shield, Coins, Globe, Bot, Zap } from "lucide-react";
 
 const features = [
   {
     icon: Mic,
     title: "Voice Cloning",
-    description: "Upload your voice dataset and train a custom AI model that sounds exactly like you.",
+    description:
+      "Upload audio samples and train a custom AI voice model that sounds exactly like you — stored permanently on Walrus.",
     color: "primary",
   },
   {
-    icon: Brain,
-    title: "AI-Powered TTS",
-    description: "State-of-the-art text-to-speech technology generates natural, expressive audio.",
+    icon: Bot,
+    title: "Voice Agent Deployment",
+    description:
+      "Turn your voice into a live AI agent. Pick a template (Sales, Support, Tutor, Creator Clone), configure an LLM, and deploy — callers talk to your voice 24/7 via LiveKit.",
     color: "secondary",
   },
   {
     icon: Shield,
     title: "On-Chain Ownership",
-    description: "Your voice identity is minted on Sui blockchain. Cryptographically proven ownership.",
+    description:
+      "Your voice is minted as a VoiceIdentity NFT on Sui. Buyers receive a LicensePass NFT — cryptographic proof of rights, no middlemen.",
     color: "primary",
   },
   {
-    icon: Coins,
-    title: "Pay-Per-Use Licensing",
-    description: "Set your own pricing. Earn automatically every time someone generates audio with your voice.",
+    icon: Zap,
+    title: "x402 Pay-Per-Use",
+    description:
+      "No subscription required. Callers pay per session via HTTP 402 micropayments on Sui — instant access, 2 uses unlocked, upsell to full license.",
     color: "secondary",
   },
   {
-    icon: Zap,
-    title: "Instant Generation",
-    description: "Generate high-quality audio in seconds. No waiting, no queues, just results.",
+    icon: Coins,
+    title: "Automatic Royalty Split",
+    description:
+      "Every payment — license purchase or x402 micropayment — auto-splits on-chain: 2.5% platform fee, 10% royalty, remainder straight to you.",
     color: "primary",
   },
   {
     icon: Globe,
     title: "Global Marketplace",
-    description: "Discover and license voices from creators worldwide. Find the perfect voice for any project.",
+    description:
+      "All registered voices are discoverable from an on-chain VoiceRegistry shared object — no localStorage, visible to everyone worldwide instantly.",
     color: "secondary",
   },
 ];
@@ -43,14 +49,16 @@ export function FeaturesSection() {
   return (
     <section className="py-24 relative">
       <div className="absolute inset-0 bg-gradient-to-b from-background via-card/30 to-background" />
-      
+
       <div className="container relative z-10 mx-auto px-4">
         <div className="text-center max-w-2xl mx-auto mb-16">
           <h2 className="font-display text-3xl md:text-4xl font-bold mb-4">
-            The Future of <span className="gradient-text">Voice Ownership</span>
+            The Full Stack for{" "}
+            <span className="gradient-text">Voice Monetization</span>
           </h2>
           <p className="text-muted-foreground">
-            A complete platform for creating, owning, and monetizing AI voice models with blockchain-verified identity.
+            Own your voice on-chain, deploy autonomous agents, and earn — from full
+            licenses to x402 micropayments — all without a middleman.
           </p>
         </div>
 
@@ -61,14 +69,18 @@ export function FeaturesSection() {
               className="glass-card-hover p-6 group"
               style={{ animationDelay: `${index * 0.1}s` }}
             >
-              <div className={`inline-flex p-3 rounded-xl mb-4 ${
-                feature.color === 'primary' 
-                  ? 'bg-primary/10 text-primary' 
-                  : 'bg-secondary/10 text-secondary'
-              } group-hover:scale-110 transition-transform duration-300`}>
+              <div
+                className={`inline-flex p-3 rounded-xl mb-4 ${
+                  feature.color === "primary"
+                    ? "bg-primary/10 text-primary"
+                    : "bg-secondary/10 text-secondary"
+                } group-hover:scale-110 transition-transform duration-300`}
+              >
                 <feature.icon className="h-6 w-6" />
               </div>
-              <h3 className="font-display text-lg font-semibold mb-2">{feature.title}</h3>
+              <h3 className="font-display text-lg font-semibold mb-2">
+                {feature.title}
+              </h3>
               <p className="text-sm text-muted-foreground">{feature.description}</p>
             </div>
           ))}

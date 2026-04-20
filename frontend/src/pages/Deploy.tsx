@@ -12,8 +12,9 @@ import { Alert, AlertDescription } from "@/components/ui/alert";
 import {
   Loader2, Rocket, Mic2, BrainCircuit, DollarSign,
   Play, Pause, Trash2, Copy, CheckCircle2, ExternalLink,
-  PhoneCall, Headphones, GraduationCap, UserCircle2, Settings2,
+  PhoneCall, Headphones, GraduationCap, UserCircle2, Settings2, Zap,
 } from "lucide-react";
+import { Switch } from "@/components/ui/switch";
 import { toast } from "sonner";
 import { useSuiWallet } from "@/hooks/useSuiWallet";
 import { useVoiceMetadata } from "@/hooks/useVoiceMetadata";
@@ -117,6 +118,9 @@ export default function Deploy() {
   const [systemPrompt, setSystemPrompt] = useState("");
   const [llmProvider, setLlmProvider] = useState("gpt-4o");
   const [pricePerCall, setPricePerCall] = useState("0.1");
+  const [x402Enabled, setX402Enabled] = useState(true);
+  const [x402Price, setX402Price] = useState("0.1");
+  const [x402Uses, setX402Uses] = useState("2");
   const [deploying, setDeploying] = useState(false);
   const [deployResult, setDeployResult] = useState<null | {
     joinUrl: string; roomName: string; startCmd: string; liveKitConfigured: boolean;
@@ -147,10 +151,13 @@ export default function Deploy() {
         template_id:    templateId,
         system_prompt:  systemPrompt,
         llm_provider:   llmProvider,
-        price_per_call: parseFloat(pricePerCall) || 0.1,
-        voice_name:     ownVoice.name,
-        voice_uri:      ownVoice.modelUri,
-        voice_id:       ownVoice.voiceId,
+        price_per_call:    parseFloat(pricePerCall) || 0.1,
+        voice_name:        ownVoice.name,
+        voice_uri:         ownVoice.modelUri,
+        voice_id:          ownVoice.voiceId,
+        x402_enabled:      x402Enabled,
+        x402_price_sui:    parseFloat(x402Price) || 0.1,
+        x402_uses:         parseInt(x402Uses) || 2,
       } as any);
 
       const result = await agentApi.deploy(agent.id);
@@ -362,6 +369,48 @@ export default function Deploy() {
                     </div>
                   </div>
 
+                  {/* x402 Pay-Per-Use Settings */}
+                  <div className="rounded-xl border border-primary/20 bg-primary/5 p-4 space-y-4">
+                    <div className="flex items-center justify-between">
+                      <div className="flex items-center gap-2">
+                        <Zap className="h-4 w-4 text-primary" />
+                        <span className="text-sm font-medium">x402 Pay-Per-Use Access</span>
+                      </div>
+                      <Switch checked={x402Enabled} onCheckedChange={setX402Enabled} />
+                    </div>
+                    {x402Enabled && (
+                      <div className="grid grid-cols-2 gap-4">
+                        <div className="space-y-2">
+                          <Label className="text-xs text-muted-foreground">Price per session (SUI)</Label>
+                          <Input
+                            type="number"
+                            step="0.01"
+                            min="0.01"
+                            value={x402Price}
+                            onChange={e => setX402Price(e.target.value)}
+                            placeholder="0.10"
+                          />
+                        </div>
+                        <div className="space-y-2">
+                          <Label className="text-xs text-muted-foreground">Uses per payment</Label>
+                          <Input
+                            type="number"
+                            step="1"
+                            min="1"
+                            value={x402Uses}
+                            onChange={e => setX402Uses(e.target.value)}
+                            placeholder="2"
+                          />
+                        </div>
+                      </div>
+                    )}
+                    <p className="text-xs text-muted-foreground">
+                      {x402Enabled
+                        ? `Callers pay ${x402Price} SUI for ${x402Uses} uses — no full license needed.`
+                        : "Full license required for access. Enable to allow casual callers."}
+                    </p>
+                  </div>
+
                   <div className="flex gap-3 pt-2">
                     <Button variant="outline" onClick={() => setStep(2)} className="flex-1">← Back</Button>
                     <Button
@@ -393,6 +442,7 @@ export default function Deploy() {
                           ["Agent",    agentName],
                           ["LLM",      LLM_PROVIDERS.find(p => p.value === llmProvider)?.label || llmProvider],
                           ["Price",    `${pricePerCall} SUI / call`],
+                          ["x402",     x402Enabled ? `${x402Price} SUI / ${x402Uses} uses` : "Disabled"],
                         ].map(([k, v]) => (
                           <div key={k} className="flex justify-between items-center px-4 py-2.5 text-sm">
                             <span className="text-muted-foreground">{k}</span>

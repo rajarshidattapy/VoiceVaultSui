@@ -2,7 +2,7 @@ import { Navbar } from "@/components/layout/Navbar";
 import { StatsCard } from "@/components/dashboard/StatsCard";
 import { UsageChart } from "@/components/dashboard/UsageChart";
 import { Button } from "@/components/ui/button";
-import { DollarSign, Mic, Users, Clock, Plus, Settings, ExternalLink, Wallet } from "lucide-react";
+import { DollarSign, Mic, Users, Clock, Plus, Settings, ExternalLink, Wallet, Zap } from "lucide-react";
 import { Link } from "react-router-dom";
 import { Helmet } from "react-helmet-async";
 import { Alert, AlertDescription } from "@/components/ui/alert";
@@ -145,6 +145,37 @@ const Dashboard = () => {
                 icon={Clock}
               />
             </div>
+
+            {/* x402 Earnings Banner */}
+            {connected && (
+              <div className="rounded-xl border border-primary/20 bg-primary/5 p-5 mb-6 flex flex-col md:flex-row items-start md:items-center justify-between gap-4">
+                <div className="flex items-center gap-3">
+                  <div className="p-2 rounded-lg bg-primary/15">
+                    <Zap className="h-5 w-5 text-primary" />
+                  </div>
+                  <div>
+                    <p className="font-semibold text-sm">x402 Pay-Per-Use Revenue</p>
+                    <p className="text-xs text-muted-foreground mt-0.5">
+                      Casual users pay micropayments for 2-use sessions. No subscription needed.
+                    </p>
+                  </div>
+                </div>
+                <div className="flex items-center gap-6 text-center">
+                  <div>
+                    <p className="text-xs text-muted-foreground">Micropayments</p>
+                    <p className="text-lg font-bold text-primary">—</p>
+                  </div>
+                  <div>
+                    <p className="text-xs text-muted-foreground">Active passes</p>
+                    <p className="text-lg font-bold">—</p>
+                  </div>
+                  <div>
+                    <p className="text-xs text-muted-foreground">Conversions</p>
+                    <p className="text-lg font-bold">—</p>
+                  </div>
+                </div>
+              </div>
+            )}
 
             {/* Chart and Activity */}
             <div className="grid grid-cols-1 lg:grid-cols-3 gap-6 mb-8">

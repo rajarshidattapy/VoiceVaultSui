@@ -10,6 +10,7 @@ import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, D
 import { formatAddress } from "@/lib/sui";
 import { isWalrusUri } from "@/lib/walrus";
 import { isVoicePurchased } from "@/lib/purchasedVoices";
+import { PayPerUseButton } from "@/components/x402/PayPerUseButton";
 
 interface VoiceMarketplaceCardProps {
   voice: VoiceWithWalrusMetadata;
@@ -147,36 +148,48 @@ export function VoiceMarketplaceCard({ voice, onPaymentSuccess }: VoiceMarketpla
             )}
           </div>
         </CardContent>
-        <CardFooter>
+        <CardFooter className="flex flex-col gap-2">
           {isPurchased ? (
             <Button
               variant="outline"
               className="w-full"
-              onClick={() => {
-                window.location.href = "/upload";
-              }}
+              onClick={() => { window.location.href = "/upload"; }}
             >
               <Play className="mr-2 h-4 w-4" />
               Use in Upload Page
             </Button>
           ) : (
-            <Button
-              onClick={() => setShowPaymentDialog(true)}
-              disabled={isPaying}
-              className="w-full"
-            >
-              {isPaying ? (
-                <>
-                  <Loader2 className="mr-2 h-4 w-4 animate-spin" />
-                  Processing...
-                </>
-              ) : (
-                <>
-                  <ShoppingCart className="mr-2 h-4 w-4" />
-                  Buy Voice
-                </>
-              )}
-            </Button>
+            <div className="flex w-full gap-2">
+              {/* Pay-per-use: try before buying */}
+              <PayPerUseButton
+                voiceId={voice.objectId}
+                modelUri={voice.modelUri}
+                creatorAddress={voice.owner}
+                voiceName={voice.name}
+                priceSui={0.1}
+                usesPerPayment={2}
+                onUpgradeToBuy={() => setShowPaymentDialog(true)}
+              />
+
+              {/* Full license purchase */}
+              <Button
+                onClick={() => setShowPaymentDialog(true)}
+                disabled={isPaying}
+                className="flex-1"
+              >
+                {isPaying ? (
+                  <>
+                    <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                    Processing...
+                  </>
+                ) : (
+                  <>
+                    <ShoppingCart className="mr-2 h-4 w-4" />
+                    Buy Voice
+                  </>
+                )}
+              </Button>
+            </div>
           )}
         </CardFooter>
       </Card>

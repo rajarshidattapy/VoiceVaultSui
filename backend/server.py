@@ -17,6 +17,8 @@ import voice_model
 import walrus as walrus_module
 import agent_store
 import livekit_service
+import x402 as x402_module
+import usage_store
 
 # Ensure storage directories exist
 walrus_module._ensure_storage_dirs()
@@ -83,19 +85,48 @@ async def tts_generate(request: Request):
             is_owner = walrus_module.verify_walrus_access(model_uri, requester_account)
 
             if not is_owner:
-                # Check 2: buyer must present proof-of-purchase (on-chain LicensePass)
-                if not voice_object_id:
-                    return JSONResponse({
-                        "error": "Access denied",
-                        "message": "Purchase this voice on the marketplace to use it.",
-                    }, status_code=403)
+                # Check 2: full LicensePass (purchased voice)
+                has_license = bool(voice_object_id and walrus_module.verify_license_pass(voice_object_id, requester_account))
 
-                has_license = walrus_module.verify_license_pass(voice_object_id, requester_account)
-                if not has_license:
-                    return JSONResponse({
-                        "error": "Access denied",
-                        "message": "No valid LicensePass found. Purchase the voice first.",
-                    }, status_code=403)
+                # Check 3: x402 UsagePass (pay-per-use)
+                has_usage_pass = False
+                active_pass_id = None
+                if not has_license and voice_object_id:
+                    ok, record = usage_store.has_access(requester_account, voice_object_id)
+                    if ok and record:
+                        has_usage_pass = True
+                        active_pass_id = record["id"]
+
+                # Check 4: fresh X-Payment-Proof header (new x402 payment)
+                if not has_license and not has_usage_pass:
+                    payment_proof = request.headers.get("X-Payment-Proof", "")
+                    if payment_proof and voice_object_id:
+                        price_mist = x402_module.DEFAULT_PRICE_MIST
+                        creator = data.get("creatorAddress", "")
+                        ok, err = x402_module.verify_sui_payment(
+                            payment_proof, requester_account, creator, price_mist
+                        )
+                        if ok:
+                            record = usage_store.create_pass(
+                                requester_account, voice_object_id,
+                                uses=x402_module.DEFAULT_USES,
+                                tx_digest=payment_proof,
+                            )
+                            active_pass_id = record["id"]
+                            has_usage_pass = True
+
+                if not has_license and not has_usage_pass:
+                    # Return 402 with payment requirements so clients can pay and retry
+                    price_mist = x402_module.DEFAULT_PRICE_MIST
+                    creator = data.get("creatorAddress", "")
+                    payment_req = x402_module.make_402_response(
+                        voice_object_id or "", price_mist, creator, "/api/tts/generate"
+                    )
+                    return JSONResponse(payment_req, status_code=402)
+
+                # Consume one use from the UsagePass
+                if has_usage_pass and active_pass_id and not has_license:
+                    usage_store.consume_pass(active_pass_id)
 
             embedding_buffer, config_buffer, preview_buffer = _download_preview_from_walrus(model_uri)
 
@@ -512,6 +543,91 @@ async def agent_join(agent_id: str, request: Request):
         }
     except Exception as err:
         return JSONResponse({"error": str(err)}, status_code=500)
+
+
+# ==================== x402 Pay-Per-Use Routes ====================
+
+@app.get("/api/x402/requirements")
+async def x402_requirements(voice_id: str, creator: str = ""):
+    """Return payment requirements for a voice (called before paying)."""
+    price_mist = x402_module.DEFAULT_PRICE_MIST
+    return x402_module.make_402_response(voice_id, price_mist, creator, "/api/tts/generate")
+
+
+@app.post("/api/x402/verify")
+async def x402_verify(request: Request):
+    """Verify a payment proof without consuming it."""
+    try:
+        data = await request.json()
+        tx_digest    = data.get("txDigest", "")
+        payer        = data.get("payer", "")
+        recipient    = data.get("recipient", "")
+        amount_mist  = int(data.get("amountMist", x402_module.DEFAULT_PRICE_MIST))
+
+        ok, reason = x402_module.verify_sui_payment(tx_digest, payer, recipient, amount_mist)
+        return {"valid": ok, "reason": reason}
+    except Exception as err:
+        return JSONResponse({"error": str(err)}, status_code=500)
+
+
+@app.post("/api/x402/create-pass")
+async def x402_create_pass(request: Request):
+    """Verify payment and issue a UsagePass."""
+    try:
+        data         = await request.json()
+        tx_digest    = data.get("txDigest", "")
+        payer        = data.get("payer", "")
+        voice_id     = data.get("voiceId", "")
+        creator      = data.get("creator", "")
+        amount_mist  = int(data.get("amountMist", x402_module.DEFAULT_PRICE_MIST))
+        uses         = int(data.get("uses", x402_module.DEFAULT_USES))
+
+        if not tx_digest or not payer or not voice_id:
+            return JSONResponse({"error": "txDigest, payer, voiceId required"}, status_code=400)
+
+        ok, reason = x402_module.verify_sui_payment(tx_digest, payer, creator, amount_mist)
+        if not ok:
+            return JSONResponse({"error": "Payment verification failed", "reason": reason}, status_code=402)
+
+        record = usage_store.create_pass(payer, voice_id, uses=uses, tx_digest=tx_digest)
+        return {"success": True, "pass": record}
+    except Exception as err:
+        return JSONResponse({"error": str(err)}, status_code=500)
+
+
+@app.post("/api/x402/consume")
+async def x402_consume(request: Request):
+    """Consume one use from a UsagePass."""
+    try:
+        data    = await request.json()
+        pass_id = data.get("passId", "")
+        if not pass_id:
+            return JSONResponse({"error": "passId required"}, status_code=400)
+        record = usage_store.consume_pass(pass_id)
+        if not record:
+            return JSONResponse({"error": "Pass not found or exhausted"}, status_code=404)
+        return {"success": True, "pass": record}
+    except Exception as err:
+        return JSONResponse({"error": str(err)}, status_code=500)
+
+
+@app.get("/api/x402/status")
+async def x402_status(user: str, voice_id: str):
+    """Check if user has an active UsagePass for a voice."""
+    ok, record = usage_store.has_access(user, voice_id)
+    return {
+        "hasAccess":       ok,
+        "usesRemaining":   record["uses_remaining"] if record else 0,
+        "expiresAt":       record["expires_at"] if record else 0,
+        "passId":          record["id"] if record else None,
+    }
+
+
+@app.get("/api/x402/passes")
+async def x402_passes(user: str):
+    """List all UsagePasses for a user."""
+    passes = usage_store.list_passes_for_user(user)
+    return {"passes": passes}
 
 
 if __name__ == "__main__":
