@@ -1,0 +1,23 @@
+{
+  "voiceId": "voice_1774777921210_owqfbusg4",
+  "owner": "0x320c877697e965c6956a941ad68c793c071f9afbcaaa34f64513d29c6dfaec7c",
+  "blobs": {
+    "embedding.bin": {
+      "blobId": "GAoKd_JmZTVyP_HpdDf5cGqDbt7BwCtg5LMUbl-6m4M",
+      "objectId": "0x281dd57504094707364bcf4d44cce4ff70f078bfadbef71723b2e3dd36db2929",
+      "size": 1024
+    },
+    "config.json": {
+      "blobId": "L-iCapUCQRVPlRHa2b24So2mcyEtgesK8B5xFn3aaTY",
+      "objectId": "0xbeca9729f71492abab91318e3493402ba3536fc8e01732f83105c7787ce4d6cf",
+      "size": 144
+    },
+    "meta.json": {
+      "blobId": "7K5CW48xk9owzXZMqsMmur77ZAMWZDxYDfZYbcziyZk",
+      "objectId": "0x29fd2ee9423afb3f7095da399c22d5ac9b0925e70bcbc06fc9aebb34115079eb",
+      "size": 236
+    }
+  },
+  "version": 1,
+  "storageMode": "local"
+}

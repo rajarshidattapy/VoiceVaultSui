@@ -1,0 +1,28 @@
+{
+  "voiceId": "voice_1774791377103_jnf68civb",
+  "owner": "0x320c877697e965c6956a941ad68c793c071f9afbcaaa34f64513d29c6dfaec7c",
+  "blobs": {
+    "embedding.bin": {
+      "blobId": "aUySmNpE1_WrtCt9sDPN2vOtagG3FE1ZO8_Dmcx76CQ",
+      "objectId": "0x73375fc46939839c2cecc6e563860e3e74364badc944e0044b54a69cefafc918",
+      "size": 1024
+    },
+    "config.json": {
+      "blobId": "L-iCapUCQRVPlRHa2b24So2mcyEtgesK8B5xFn3aaTY",
+      "objectId": "0xbeca9729f71492abab91318e3493402ba3536fc8e01732f83105c7787ce4d6cf",
+      "size": 144
+    },
+    "meta.json": {
+      "blobId": "C0zXnyE1TvmwzlBZlYnMYNvEqS8jYCPcdEHsKYG2tU8",
+      "objectId": "0x2e16c8083e18ab894bef30987d744a9918f929110b95e221ae5cf68959eedbea",
+      "size": 246
+    },
+    "preview.wav": {
+      "blobId": "S-inywP8zv7fJAEJBVQP518BKoqFt9gGA85TzVmsWg0",
+      "objectId": "0x55f08bd50e80709976639a5224cf862d0b8c01fa83d3057f6ea0678634b0ce54",
+      "size": 44432
+    }
+  },
+  "version": 1,
+  "storageMode": "local"
+}

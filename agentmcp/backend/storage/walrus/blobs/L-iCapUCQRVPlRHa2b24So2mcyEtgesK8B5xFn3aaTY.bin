@@ -1,0 +1,8 @@
+{
+  "modelVersion": "1.0.0",
+  "sampleRate": 16000,
+  "channels": 1,
+  "format": "wav",
+  "embeddingSize": 256,
+  "embeddingFormat": "float32"
+}

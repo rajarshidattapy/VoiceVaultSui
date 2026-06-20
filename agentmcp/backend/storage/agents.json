@@ -1,0 +1,21 @@
+{
+  "08d39dba": {
+    "id": "08d39dba",
+    "owner": "0x7Bc5F4fFd5630023034a670a39Ba24683D605C7A",
+    "status": "live",
+    "room_name": "vv-08d39dba",
+    "calls_count": 0,
+    "total_earned_sui": 0.0,
+    "created_at": 1780844275,
+    "skills": [],
+    "language": "en-IN",
+    "endpoint": "http://localhost:8000/api/agent/call/08d39dba",
+    "agent_name": "My Agent",
+    "template_id": "custom",
+    "system_prompt": "You are a helpful assistant.",
+    "llm_provider": "gpt-4o",
+    "price_per_call": 0.1,
+    "voice_name": "",
+    "voice_id": ""
+  }
+}

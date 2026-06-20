@@ -1,0 +1,15 @@
+fastapi==0.115.0
+uvicorn[standard]==0.30.0
+python-dotenv==1.1.0
+httpx==0.27.0
+python-multipart==0.0.9
+web3==6.20.3
+sqlalchemy==2.0.36
+livekit-api
+livekit-agents>=1.0.0
+livekit-plugins-openai
+livekit-plugins-silero
+openai
+sarvamai
+mcp[cli]
+gradio_client
