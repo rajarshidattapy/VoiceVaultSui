@@ -3,6 +3,7 @@ import { useSignAndExecuteTransaction, useSuiClient } from "@mysten/dapp-kit";
 import { Transaction } from "@mysten/sui/transactions";
 import { useSuiWallet } from "./useSuiWallet";
 import { CONTRACTS, suiToMist } from "@/lib/contracts";
+import { buildRegisterVoiceArguments } from "@/lib/voiceContract";
 import { toast } from "sonner";
 
 export interface VoiceRegistrationData {
@@ -30,18 +31,17 @@ export function useVoiceRegister() {
       const priceInMist = suiToMist(data.pricePerUse);
 
       const tx = new Transaction();
+      const registerArgs = await buildRegisterVoiceArguments(suiClient, tx, {
+        name: data.name,
+        modelUri: data.modelUri,
+        rights: data.rights,
+        priceInMist,
+      });
 
-      // Call voice_identity::register_voice — passes the shared VoiceRegistry so the
-      // owner address is appended on-chain, making the marketplace globally queryable.
+      // Supports both deployed contract shapes: register_voice(...) and register_voice(registry, ...).
       const voice = tx.moveCall({
         target: `${CONTRACTS.PACKAGE_ID}::${CONTRACTS.VOICE_IDENTITY.module}::register_voice`,
-        arguments: [
-          tx.object(CONTRACTS.VOICE_REGISTRY_ID),
-          tx.pure.string(data.name),
-          tx.pure.string(data.modelUri),
-          tx.pure.string(data.rights),
-          tx.pure.u64(priceInMist),
-        ],
+        arguments: registerArgs,
       });
 
       // Transfer the returned VoiceIdentity object to the sender

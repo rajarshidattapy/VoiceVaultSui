@@ -34,3 +34,5 @@ frontend/.env
 next/.env
 .claude/
 .env
+backend/venv/
+__pycache__/

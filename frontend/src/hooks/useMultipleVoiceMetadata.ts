@@ -44,8 +44,8 @@ export function useMultipleVoiceMetadata(addresses: string[]) {
             const fields = content.fields as any;
             return {
               owner: fields.owner as string,
-              voiceId: fields.voice_id?.toString() || "0",
               objectId: obj.data!.objectId,
+              voiceId: fields.voice_id?.toString() || obj.data!.objectId,
               name: parseMoveString(fields.name),
               modelUri: parseMoveString(fields.model_uri),
               rights: parseMoveString(fields.rights),

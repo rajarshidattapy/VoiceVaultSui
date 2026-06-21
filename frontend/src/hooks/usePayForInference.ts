@@ -3,6 +3,7 @@ import { useSignAndExecuteTransaction, useSuiClient } from "@mysten/dapp-kit";
 import { Transaction, coinWithBalance } from "@mysten/sui/transactions";
 import { useSuiWallet } from "./useSuiWallet";
 import { CONTRACTS, suiToMist, calculatePaymentBreakdown } from "@/lib/contracts";
+import { buildRoyaltyPaymentArguments } from "@/lib/paymentContract";
 import { toast } from "sonner";
 
 export interface PaymentOptions {
@@ -10,7 +11,7 @@ export interface PaymentOptions {
   creatorAddress: string;
   amount: number; // in SUI
   royaltyRecipient?: string;
-  onSuccess?: (txHash: string) => void;
+  onSuccess?: (txHash: string, metadata?: { mintsLicensePass: boolean }) => void;
   onError?: (error: Error) => void;
 }
 
@@ -53,19 +54,19 @@ export function usePayForInference() {
 
       // Create a coin with the exact balance needed for payment
       const paymentCoin = coinWithBalance({ balance: BigInt(amountInMist) });
+      const payment = await buildRoyaltyPaymentArguments(suiClient, tx, {
+        paymentCoin,
+        voiceId,
+        creatorAddress,
+        royaltyRecipient,
+      });
 
       // Call payment::pay_with_royalty_split — passes voiceId so the contract mints
       // a LicensePass to the buyer, which the backend verifies instead of DB logic.
       tx.moveCall({
         target: `${CONTRACTS.PACKAGE_ID}::${CONTRACTS.PAYMENT.module}::pay_with_royalty_split`,
         typeArguments: ["0x2::sui::SUI"],
-        arguments: [
-          paymentCoin,
-          tx.pure.address(voiceId), // ID is BCS-compatible with address (32 bytes)
-          tx.pure.address(creatorAddress),
-          tx.pure.address(CONTRACTS.PLATFORM_ADDRESS),
-          tx.pure.address(royaltyRecipient || creatorAddress),
-        ],
+        arguments: payment.args,
       });
 
       toast.info("Please approve the transaction in your wallet...");
@@ -89,12 +90,13 @@ export function usePayForInference() {
       });
 
       if (onSuccess) {
-        onSuccess(txDigest);
+        onSuccess(txDigest, { mintsLicensePass: payment.mintsLicensePass });
       }
 
       return {
         success: true,
         transactionHash: txDigest,
+        mintsLicensePass: payment.mintsLicensePass,
       };
     } catch (error: any) {
       console.error("Payment error:", error);

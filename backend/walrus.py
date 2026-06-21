@@ -430,6 +430,161 @@ def verify_license_pass(voice_object_id: str, requester_account: str) -> bool:
         return False
 
 
+def _normalize_hex(value: object) -> str:
+    return str(value or "").lower()
+
+
+def _owner_address(owner: object) -> str:
+    if isinstance(owner, dict):
+        value = owner.get("AddressOwner") or owner.get("addressOwner") or owner.get("address")
+        if value:
+            return _normalize_hex(value)
+    return _normalize_hex(owner)
+
+
+def _argument_input_index(argument: object) -> Optional[int]:
+    if isinstance(argument, dict):
+        value = argument.get("Input")
+        if value is None:
+            value = argument.get("input")
+        if isinstance(value, int):
+            return value
+    return None
+
+
+def _input_address(inputs: list, argument: object) -> str:
+    index = _argument_input_index(argument)
+    if index is None or index >= len(inputs):
+        return ""
+
+    value = inputs[index]
+    if isinstance(value, dict):
+        pure_value = value.get("value") or value.get("Value")
+        if pure_value:
+            return _normalize_hex(pure_value)
+        object_id = value.get("objectId") or value.get("object_id")
+        if object_id:
+            return _normalize_hex(object_id)
+    return ""
+
+
+def _programmable_transaction(tx_kind: dict) -> tuple[list, list]:
+    if not isinstance(tx_kind, dict):
+        return [], []
+
+    if "ProgrammableTransaction" in tx_kind:
+        programmable = tx_kind.get("ProgrammableTransaction") or {}
+        return programmable.get("inputs") or [], programmable.get("transactions") or []
+
+    if "programmableTransaction" in tx_kind:
+        programmable = tx_kind.get("programmableTransaction") or {}
+        return programmable.get("inputs") or [], programmable.get("transactions") or []
+
+    return tx_kind.get("inputs") or [], tx_kind.get("transactions") or []
+
+
+def _move_call(command: object) -> dict:
+    if not isinstance(command, dict):
+        return {}
+    return command.get("MoveCall") or command.get("moveCall") or {}
+
+
+def verify_purchase_transaction(
+    tx_digest: str,
+    requester_account: str,
+    creator_address: str,
+    voice_object_id: str = "",
+) -> bool:
+    """
+    Verify a legacy marketplace purchase transaction.
+
+    The current deployed payment contract does not mint LicensePass and does
+    not carry voice_id, so the strongest legacy proof is: successful payment
+    call from buyer to the voice creator in the configured package.
+    """
+    rpc_url = os.getenv("SUI_RPC_URL", "https://fullnode.testnet.sui.io")
+    package_id = os.getenv("SUI_PACKAGE_ID", "").strip()
+
+    if not package_id or not tx_digest or not requester_account or not creator_address:
+        return False
+
+    try:
+        response = httpx.post(
+            rpc_url,
+            json={
+                "jsonrpc": "2.0",
+                "id": 1,
+                "method": "sui_getTransactionBlock",
+                "params": [
+                    tx_digest,
+                    {
+                        "showInput": True,
+                        "showEffects": True,
+                        "showBalanceChanges": True,
+                    },
+                ],
+            },
+            timeout=10,
+        )
+        response.raise_for_status()
+        result = (response.json().get("result") or {})
+
+        effects = result.get("effects") or {}
+        status = (effects.get("status") or {}).get("status")
+        if status != "success":
+            return False
+
+        tx_data = ((result.get("transaction") or {}).get("data")) or {}
+        if _normalize_hex(tx_data.get("sender")) != _normalize_hex(requester_account):
+            return False
+
+        inputs, commands = _programmable_transaction(tx_data.get("transaction") or {})
+        expected_package = _normalize_hex(package_id)
+        expected_creator = _normalize_hex(creator_address)
+        expected_voice = _normalize_hex(voice_object_id)
+
+        payment_call_found = False
+        for command in commands:
+            call = _move_call(command)
+            if not call:
+                continue
+            if _normalize_hex(call.get("package")) != expected_package:
+                continue
+            if call.get("module") != "payment" or call.get("function") != "pay_with_royalty_split":
+                continue
+
+            args = call.get("arguments") or []
+            if len(args) >= 5:
+                call_voice = _input_address(inputs, args[1])
+                call_creator = _input_address(inputs, args[2])
+                if expected_voice and call_voice != expected_voice:
+                    continue
+            elif len(args) == 4:
+                call_creator = _input_address(inputs, args[1])
+            else:
+                continue
+
+            if call_creator == expected_creator:
+                payment_call_found = True
+                break
+
+        if not payment_call_found:
+            return False
+
+        for change in result.get("balanceChanges") or []:
+            if _owner_address(change.get("owner")) != expected_creator:
+                continue
+            if change.get("coinType") != "0x2::sui::SUI":
+                continue
+            if int(change.get("amount") or 0) > 0:
+                return True
+
+        return False
+    except Exception as err:
+        print(f"[verify_purchase_transaction] Sui RPC error: {err}")
+        return False
+
+
 def _manifest_blob_ids(manifest: Dict[str, object]) -> List[str]:
     referenced: List[str] = []
     for blob_ref in (manifest.get("blobs") or {}).values():

@@ -66,6 +66,7 @@ AGENT_NETWORK_MCP_URL = os.getenv("AGENT_NETWORK_MCP_URL", "http://127.0.0.1:800
 BACKEND_API_URL = os.getenv("BACKEND_URL", "http://localhost:8000").rstrip("/")
 MAX_DELEGATION_DEPTH = int(os.getenv("MAX_DELEGATION_DEPTH", "2"))
 HANDOFF_PARK_FALLBACK_SECONDS = float(os.getenv("AGENT_HANDOFF_PARK_FALLBACK_SECONDS", "8"))
+INITIAL_REPLY_WAIT_SECONDS = float(os.getenv("AGENT_INITIAL_REPLY_WAIT_SECONDS", "120"))
 
 server = AgentServer(port=int(os.getenv("LIVEKIT_AGENT_HTTP_PORT", "0")))
 
@@ -191,7 +192,16 @@ def _room_input_options(user_identity: str) -> RoomInputOptions:
     kwargs = {
         "participant_kinds": [rtc.ParticipantKind.PARTICIPANT_KIND_STANDARD],
     }
-    if user_identity:
+    # Dispatch metadata can be reused while the browser identity changes
+    # between "user", a wallet address, or a generated LiveKit identity.
+    # Filtering by participant kind keeps agent-to-agent audio out without
+    # accidentally ignoring the human caller.
+    strict_identity = os.getenv("AGENT_STRICT_USER_IDENTITY", "false").lower() in {
+        "1",
+        "true",
+        "yes",
+    }
+    if strict_identity and user_identity:
         kwargs["participant_identity"] = user_identity
     return RoomInputOptions(**kwargs)
 
@@ -281,6 +291,59 @@ async def _park_agent_session(
         )
     except Exception as exc:
         logger.exception("Failed to park handoff source agent: %s", exc)
+
+
+async def _queue_initial_reply(
+    session: AgentSession,
+    *,
+    agent_name: str,
+    room_name: str,
+    metadata: dict,
+) -> None:
+    try:
+        try:
+            await asyncio.wait_for(session.room_io.wait_for_ready(), timeout=INITIAL_REPLY_WAIT_SECONDS)
+        except asyncio.TimeoutError:
+            logger.warning(
+                "Timed out waiting for the target user participant before initial reply "
+                "(room=%s, user=%s)",
+                room_name,
+                metadata.get("user_identity", ""),
+            )
+            return
+
+        if metadata.get("mode") == "room_invite" and metadata.get("question"):
+            speech = session.generate_reply(
+                instructions=(
+                    f"You are {agent_name}. Briefly answer this delegated question now: "
+                    f"{metadata.get('question')}"
+                ),
+                tool_choice="none",
+            )
+            logger.info(
+                "Queued delegated opening reply for agent '%s' in room '%s' (speech_id=%s)",
+                agent_name,
+                room_name,
+                speech.id,
+            )
+        else:
+            speech = session.generate_reply(
+                instructions=(
+                    f"Greet the user briefly as {agent_name} and ask how you can help. "
+                    "Do not use tools for this greeting."
+                ),
+                tool_choice="none",
+            )
+            logger.info(
+                "Queued opening greeting for agent '%s' in room '%s' (speech_id=%s)",
+                agent_name,
+                room_name,
+                speech.id,
+            )
+    except RuntimeError as exc:
+        logger.warning("Initial reply skipped because the session is no longer active: %s", exc)
+    except Exception as exc:
+        logger.exception("Failed to queue initial reply: %s", exc)
 
 
 def _transfer_tool(
@@ -383,10 +446,11 @@ def _transfer_tool(
 
             handoff_text = f"I have invited {invited_name}. Over to you, {invited_name}."
             try:
-                speech = session.say(
-                    handoff_text,
-                    allow_interruptions=False,
-                    add_to_chat_ctx=True,
+                speech = session.generate_reply(
+                    instructions=(
+                        f"Say exactly this short handoff line and nothing else: {handoff_text}"
+                    ),
+                    tool_choice="none",
                 )
 
                 def on_handoff_done(_speech) -> None:
@@ -470,23 +534,15 @@ async def voicevault_agent(ctx: agents.JobContext):
         room_input_options=_room_input_options(user_identity),
     )
 
-    try:
-        if metadata.get("mode") == "room_invite" and metadata.get("question"):
-            await session.generate_reply(
-                instructions=(
-                    f"You are {agent_name}. Briefly answer this delegated question now: "
-                    f"{metadata.get('question')}"
-                )
-            )
-        else:
-            await session.generate_reply(
-                instructions=f"Greet the user briefly as {agent_name} and ask how you can help."
-            )
-    except AttributeError:
-        if hasattr(session, "say"):
-            await session.say(f"Hi, I'm {agent_name}. How can I help you today?")
-
     logger.info("Agent '%s' is active in room '%s'", agent_name, room_name)
+    asyncio.create_task(
+        _queue_initial_reply(
+            session,
+            agent_name=agent_name,
+            room_name=room_name,
+            metadata=metadata,
+        )
+    )
 
 
 if __name__ == "__main__":

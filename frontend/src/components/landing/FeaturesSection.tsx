@@ -61,11 +61,10 @@ export function FeaturesSection() {
               className="glass-card-hover p-6 group"
               style={{ animationDelay: `${index * 0.08}s` }}
             >
-              <div className={`inline-flex p-3 rounded-xl mb-3 ${
-                feature.color === "primary"
+              <div className={`inline-flex p-3 rounded-xl mb-3 ${feature.color === "primary"
                   ? "bg-primary/10 text-primary"
                   : "bg-secondary/10 text-secondary"
-              } group-hover:scale-110 transition-transform duration-300`}>
+                } group-hover:scale-110 transition-transform duration-300`}>
                 <feature.icon className="h-5 w-5" />
               </div>
               <h3 className="font-display text-base font-semibold mb-1">{feature.title}</h3>

@@ -5,10 +5,9 @@ import { Input } from "@/components/ui/input";
 import { Search, SlidersHorizontal, TrendingUp, Clock, Star, RefreshCw } from "lucide-react";
 import { Helmet } from "react-helmet-async";
 import { VoiceMetadata } from "@/hooks/useVoiceMetadata";
-import { useVoicesWithWalrusMetadata } from "@/hooks/useVoicesWithWalrusMetadata";
 import { VoiceMarketplaceCard } from "@/components/voice/VoiceMarketplaceCard";
 import { toast } from "sonner";
-import { useGlobalRegistry } from "@/hooks/useGlobalRegistry";
+import { useMarketplaceVoices } from "@/hooks/useMarketplaceVoices";
 import { useSuiWallet } from "@/hooks/useSuiWallet";
 import { Alert, AlertDescription } from "@/components/ui/alert";
 import { InfoIcon } from "lucide-react";
@@ -25,26 +24,24 @@ const Marketplace = () => {
   const [searchQuery, setSearchQuery] = useState("");
   const [activeFilter, setActiveFilter] = useState("trending");
 
-  // Load voice owner addresses from the on-chain global VoiceRegistry shared object
-  const { voiceOwners, isLoading: isLoadingRegistry, refetch } = useGlobalRegistry();
+  const { voices, isLoading, error, refetch } = useMarketplaceVoices();
 
-  // Fetch voices with metadata from both Sui (on-chain) and Walrus manifests.
-  // Sui provides: owner, price, rights, modelUri
-  // Walrus provides: name, description, preview audio
-  const { voices: enrichedVoices, isLoading: isLoadingVoices } = useVoicesWithWalrusMetadata(voiceOwners);
-  
-  const voices = enrichedVoices;
-  const isLoading = isLoadingRegistry || isLoadingVoices;
-
-  const handlePurchaseSuccess = async (voice: VoiceMetadata, txHash: string) => {
+  const handlePurchaseSuccess = async (
+    voice: VoiceMetadata,
+    txHash: string,
+    metadata?: { mintsLicensePass: boolean }
+  ) => {
     // Track purchased voice in localStorage
     const { addPurchasedVoice } = await import("@/lib/purchasedVoices");
     addPurchasedVoice({
       voiceId: voice.voiceId,
+      objectId: voice.objectId,
       name: voice.name,
       modelUri: voice.modelUri,
       owner: voice.owner,
       price: voice.pricePerUse,
+      buyer: address || undefined,
+      licenseMode: metadata?.mintsLicensePass ? "onchain" : "legacy_tx",
       purchasedAt: Date.now(),
       txHash: txHash,
     });
@@ -109,7 +106,7 @@ const Marketplace = () => {
                 className="h-12"
                 onClick={() => {
                   refetch();
-                  toast.info("Refreshing registry from blockchain...");
+                  toast.info("Refreshing voices from Sui blockchain...");
                 }}
                 disabled={isLoading}
               >
@@ -139,6 +136,13 @@ const Marketplace = () => {
                 </button>
               ))}
             </div>
+
+            {error && (
+              <Alert className="mb-8">
+                <InfoIcon className="h-4 w-4" />
+                <AlertDescription>{error}</AlertDescription>
+              </Alert>
+            )}
 
             {/* Voice Grid */}
             {isLoading ? (
@@ -174,7 +178,7 @@ const Marketplace = () => {
                     <VoiceMarketplaceCard
                       key={`${voice.owner}-${voice.voiceId}`}
                       voice={voice}
-                      onPaymentSuccess={(txHash, voice) => handlePurchaseSuccess(voice, txHash)}
+                      onPaymentSuccess={(txHash, voice, metadata) => handlePurchaseSuccess(voice, txHash, metadata)}
                     />
                   ))}
               </div>

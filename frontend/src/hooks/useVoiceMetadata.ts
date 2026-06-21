@@ -15,12 +15,12 @@ export interface VoiceMetadata {
   createdAt: number;
 }
 
-const VOICE_TYPE = `${CONTRACTS.PACKAGE_ID}::${CONTRACTS.VOICE_IDENTITY.module}::VoiceIdentity`;
+export const VOICE_TYPE = `${CONTRACTS.PACKAGE_ID}::${CONTRACTS.VOICE_IDENTITY.module}::VoiceIdentity`;
 
 /**
  * Parse a VoiceIdentity object's fields into VoiceMetadata
  */
-function parseVoiceObject(obj: any): VoiceMetadata | null {
+export function parseVoiceObject(obj: any): VoiceMetadata | null {
   try {
     const content = obj.data?.content;
     if (!content || content.dataType !== "moveObject") return null;
@@ -28,8 +28,8 @@ function parseVoiceObject(obj: any): VoiceMetadata | null {
     const fields = content.fields as any;
     return {
       owner: fields.owner as string,
-      voiceId: fields.voice_id?.toString() || "0",
       objectId: obj.data.objectId,
+      voiceId: fields.voice_id?.toString() || obj.data.objectId,
       name: parseMoveString(fields.name),
       modelUri: parseMoveString(fields.model_uri),
       rights: parseMoveString(fields.rights),
