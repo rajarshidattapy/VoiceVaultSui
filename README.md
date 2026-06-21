@@ -195,6 +195,36 @@ MURF_VOICE_ID=your_custom_murf_voice_id
 
 Agents can invite another deployed agent into the same LiveKit room when the conversation requires handoff or specialist support.
 
+## Smart Contracts
+
+The current Sui testnet deployment uses this package:
+
+```text
+0x1ad12f0fd581dbd4fef7a30c9cff9bececfca1da450fe53257791502b3db073d
+```
+
+Explorer:
+
+- [Sui Explorer - Package](https://suiexplorer.com/object/0x1ad12f0fd581dbd4fef7a30c9cff9bececfca1da450fe53257791502b3db073d?network=testnet)
+
+Modules in the package:
+
+| Module | Purpose |
+| --- | --- |
+| `voice_identity` | Registers voice ownership and stores voice metadata such as name, voice ID, and Walrus model URI |
+| `payment` | Handles royalty split payments and purchase/license logic |
+| `agent_identity` | Stores deployed agent identity/config metadata on-chain |
+
+The active shared voice registry object is:
+
+```text
+0xfad2808bcd104197b53b1fddede5f25d5c16303b147d280c2aa7ff69d27e5d59
+```
+
+Explorer:
+
+- [Sui Explorer - Voice Registry](https://suiexplorer.com/object/0xfad2808bcd104197b53b1fddede5f25d5c16303b147d280c2aa7ff69d27e5d59?network=testnet)
+
 ## API Overview
 
 | Method | Endpoint | Purpose |
