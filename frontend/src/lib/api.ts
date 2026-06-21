@@ -31,7 +31,15 @@ export const BACKEND_CONFIG = {
 };
 
 export const backendApi = {
-  async generateTTS(modelUri: string, text: string, requesterAccount?: string, voiceObjectId?: string): Promise<Blob> {
+  async generateTTS(
+    modelUri: string,
+    text: string,
+    requesterAccount?: string,
+    voiceObjectId?: string,
+    purchaseTxHash?: string,
+    creatorAddress?: string,
+    murfVoiceId?: string,
+  ): Promise<Blob> {
     const response = await fetch(`${BACKEND_CONFIG.BASE_URL}${BACKEND_CONFIG.ENDPOINTS.UNIFIED_TTS}`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
@@ -40,6 +48,9 @@ export const backendApi = {
         text,
         ...(requesterAccount ? { requesterAccount } : {}),
         ...(voiceObjectId ? { voiceObjectId } : {}),
+        ...(purchaseTxHash ? { purchaseTxHash } : {}),
+        ...(creatorAddress ? { creatorAddress } : {}),
+        ...(murfVoiceId ? { murfVoiceId } : {}),
       }),
     });
 

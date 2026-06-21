@@ -1,5 +1,6 @@
 import atexit
 import asyncio
+import base64
 import json
 import math
 import os
@@ -15,12 +16,14 @@ from dotenv import load_dotenv
 from fastapi import FastAPI, File, Form, Request, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse, Response
+import httpx
 import uvicorn
 
 # Load .env — try backend/ first, then project root as fallback
 BACKEND_DIR = Path(__file__).resolve().parent
 load_dotenv(dotenv_path=BACKEND_DIR / ".env")
 load_dotenv(dotenv_path=BACKEND_DIR.parent / ".env")
+load_dotenv(dotenv_path=BACKEND_DIR.parent / "frontend" / ".env")
 
 import voice_model
 import walrus as walrus_module
@@ -97,6 +100,93 @@ def _pick(data: dict, *keys: str, default=None):
         if key in data and data[key] is not None:
             return data[key]
     return default
+
+
+def _murf_api_key() -> str:
+    return (
+        os.getenv("MURF_API_KEY")
+        or os.getenv("MURF_KEY")
+        or os.getenv("murf_key")
+        or ""
+    ).strip()
+
+
+def _murf_media_type(audio_format: str) -> str:
+    fmt = audio_format.upper()
+    if fmt == "MP3":
+        return "audio/mpeg"
+    if fmt == "OGG":
+        return "audio/ogg"
+    if fmt == "FLAC":
+        return "audio/flac"
+    return "audio/wav"
+
+
+def _murf_error_message(status_code: int, body: str) -> str:
+    try:
+        parsed = json.loads(body)
+        detail = parsed.get("message") or parsed.get("error") or parsed.get("detail")
+        if detail:
+            return str(detail)
+    except Exception:
+        pass
+    return body.strip() or f"Murf API request failed with status {status_code}"
+
+
+async def _generate_murf_tts(text: str, data: dict) -> tuple[bytes, str]:
+    api_key = _murf_api_key()
+    if not api_key:
+        raise RuntimeError("MURF_API_KEY is not configured. Add it to backend/.env as MURF_API_KEY or MURF_KEY.")
+
+    voice_id = (
+        _pick(data, "murfVoiceId", "voiceIdForTts")
+        or os.getenv("MURF_VOICE_ID")
+        or os.getenv("VITE_MURF_VOICE_ID")
+        or "Ken"
+    )
+    audio_format = (os.getenv("MURF_FORMAT") or "WAV").upper()
+    payload = {
+        "text": text,
+        "voiceId": voice_id,
+        "format": audio_format,
+        "locale": os.getenv("MURF_LOCALE") or "en-US",
+        "sampleRate": int(os.getenv("MURF_SAMPLE_RATE") or "44100"),
+        "modelVersion": os.getenv("MURF_MODEL_VERSION") or "GEN2",
+        "encodeAsBase64": True,
+    }
+
+    style = _pick(data, "murfStyle") or os.getenv("MURF_STYLE")
+    if style:
+        payload["style"] = style
+
+    for field, env_name in (("pitch", "MURF_PITCH"), ("rate", "MURF_RATE"), ("variation", "MURF_VARIATION")):
+        raw_value = _pick(data, field) or os.getenv(env_name)
+        if raw_value not in (None, ""):
+            payload[field] = int(raw_value)
+
+    async with httpx.AsyncClient(timeout=90) as client:
+        response = await client.post(
+            "https://api.murf.ai/v1/speech/generate",
+            headers={"api-key": api_key},
+            json=payload,
+        )
+
+        if not response.is_success:
+            raise RuntimeError(_murf_error_message(response.status_code, response.text))
+
+        result = response.json()
+        encoded_audio = result.get("encodedAudio") or result.get("encoded_audio")
+        if encoded_audio:
+            return base64.b64decode(encoded_audio), _murf_media_type(audio_format)
+
+        audio_url = result.get("audioFile") or result.get("audio_file")
+        if audio_url:
+            audio_response = await client.get(audio_url)
+            if not audio_response.is_success:
+                raise RuntimeError(f"Unable to download Murf audio output ({audio_response.status_code})")
+            return audio_response.content, audio_response.headers.get("content-type") or _murf_media_type(audio_format)
+
+    raise RuntimeError("Murf did not return generated audio")
 
 
 _agent_worker_process: subprocess.Popen | None = None
@@ -475,11 +565,17 @@ async def tts_generate(request: Request):
         text = data.get("text")
         requester_account = data.get("requesterAccount")
         voice_object_id = data.get("voiceObjectId")  # VoiceIdentity object ID on Sui
+        purchase_tx_hash = data.get("purchaseTxHash")
+        creator_address = data.get("creatorAddress", "")
 
         if not model_uri:
             return JSONResponse({"error": "modelUri parameter missing"}, status_code=400)
         if not text:
             return JSONResponse({"error": "text parameter missing"}, status_code=400)
+
+        if model_uri.startswith("murf://"):
+            audio_buffer, media_type = await _generate_murf_tts(text, data)
+            return Response(content=audio_buffer, media_type=media_type)
 
         if model_uri.startswith("walrus://"):
             if not requester_account:
@@ -519,10 +615,19 @@ async def tts_generate(request: Request):
                             active_pass_id = record["id"]
                             has_usage_pass = True
 
+                # Check 5: legacy direct purchase transaction, used by the marketplace buy flow
+                if not has_license and not has_usage_pass and purchase_tx_hash and creator_address:
+                    has_license = walrus_module.verify_purchase_transaction(
+                        purchase_tx_hash,
+                        requester_account,
+                        creator_address,
+                        voice_object_id or "",
+                    )
+
                 if not has_license and not has_usage_pass:
                     # Return 402 with payment requirements so clients can pay and retry
                     price_mist = x402_module.DEFAULT_PRICE_MIST
-                    creator = data.get("creatorAddress", "")
+                    creator = creator_address
                     payment_req = x402_module.make_402_response(
                         voice_object_id or "", price_mist, creator, "/api/tts/generate"
                     )
@@ -537,10 +642,8 @@ async def tts_generate(request: Request):
             if not embedding_buffer or not config_buffer:
                 return JSONResponse({"error": "Voice model files not found on Walrus"}, status_code=404)
 
-            if preview_buffer and len(preview_buffer) > 0:
-                return Response(content=preview_buffer, media_type="audio/wav")
-
-            return JSONResponse({"error": "No preview audio available for this voice"}, status_code=404)
+            audio_buffer, media_type = await _generate_murf_tts(text, data)
+            return Response(content=audio_buffer, media_type=media_type)
 
         return JSONResponse({
             "error": "Unsupported model URI format",

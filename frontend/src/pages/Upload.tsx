@@ -51,7 +51,7 @@ const Upload = () => {
   const [autoName, setAutoName] = useState("");
   const [autoModelUri, setAutoModelUri] = useState("");
 
-  // ------------------- Voice Cloning (Chatterbox) -------------------
+  // ------------------- Voice Cloning (Murf) -------------------
   const [cloneRecording, setCloneRecording] = useState(false);
   const [cloneRecordedAudio, setCloneRecordedAudio] = useState<File | null>(null);
   const [cloneText, setCloneText] = useState("");
@@ -173,33 +173,17 @@ const Upload = () => {
     setTtsLoading(true);
     try {
       const { backendApi } = await import("@/lib/api");
-      const { chatterboxVoiceClone } = await import("@/lib/chatterbox");
-      toast.info("Fetching voice model and generating speech via Chatterbox...");
+      toast.info("Generating speech via Murf...");
       const selectedVoice = purchasedVoices.find((voice) => voice.modelUri === selectedPurchasedVoice);
 
-      let previewBuffer;
-      try {
-        previewBuffer = await backendApi.downloadModelFile(
-          selectedPurchasedVoice,
-          "preview.wav",
-          address.toString(),
-          selectedVoice?.objectId || selectedVoice?.voiceId,
-          selectedVoice?.txHash,
-          selectedVoice?.owner
-        );
-      } catch (downloadErr: any) {
-        console.error("Download error:", downloadErr);
-        toast.error(
-          downloadErr.message.includes("File not found") 
-            ? "Voice model files are not complete. Please reprocess the voice in Step 1."
-            : `Failed to fetch voice model: ${downloadErr.message}`
-        );
-        setTtsLoading(false);
-        return;
-      }
-
-      const previewBlob = new Blob([previewBuffer], { type: "audio/wav" });
-      const audioBlob = await chatterboxVoiceClone(ttsText, previewBlob);
+      const audioBlob = await backendApi.generateTTS(
+        selectedPurchasedVoice,
+        ttsText,
+        address.toString(),
+        selectedVoice?.objectId || selectedVoice?.voiceId,
+        selectedVoice?.txHash,
+        selectedVoice?.owner
+      );
       setTtsAudioUrl(URL.createObjectURL(audioBlob));
       toast.success("Speech generated successfully!");
     } catch (err: any) {
@@ -268,16 +252,16 @@ const Upload = () => {
     }
   };
 
-  // ------------------- Clone Voice & Generate (Chatterbox) -------------------
+  // ------------------- Clone Voice & Generate (Murf) -------------------
   const handleCloneAndGenerate = async () => {
     if (!cloneRecordedAudio) { toast.error("Please record or upload a voice sample first"); return; }
     if (!cloneText.trim()) { toast.error("Please enter the text you want your voice to say"); return; }
 
     setCloneLoading(true);
     try {
-      const { chatterboxVoiceClone } = await import("@/lib/chatterbox");
+      const { murfVoiceClone } = await import("@/lib/murfVoice");
       toast.info("Cloning your voice and generating speech...");
-      const audioBlob = await chatterboxVoiceClone(cloneText.trim(), cloneRecordedAudio);
+      const audioBlob = await murfVoiceClone(cloneText.trim(), cloneRecordedAudio);
       setCloneOutputAudio(URL.createObjectURL(audioBlob));
       toast.success("Done! Your voice is speaking the text you wrote.");
     } catch (err: any) {
