@@ -186,7 +186,7 @@ export default function Deploy() {
 
   const handleJoin = async (agentId: string) => {
     try {
-      const result = await agentApi.join(agentId, address || "user");
+      const result = await agentApi.talk(agentId, address || "user");
       if (result.joinUrl) {
         window.open(result.joinUrl, "_blank");
       } else {

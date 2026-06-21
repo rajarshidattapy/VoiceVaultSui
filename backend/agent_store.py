@@ -4,6 +4,7 @@ Simple JSON-backed agent store for VoiceVault Deploy.
 from __future__ import annotations
 
 import json
+import os
 import threading
 import time
 import uuid
@@ -32,6 +33,7 @@ def create_agent(owner: str, config: dict) -> dict:
     with _lock:
         data = _load()
         agent_id = uuid.uuid4().hex[:8]
+        base_url = os.getenv("BACKEND_URL", "http://localhost:8000").rstrip("/")
         agent = {
             "id": agent_id,
             "owner": owner,
@@ -40,6 +42,10 @@ def create_agent(owner: str, config: dict) -> dict:
             "calls_count": 0,
             "total_earned_sui": 0.0,
             "created_at": int(time.time()),
+            "skills": [],
+            "language": "en-IN",
+            "agent_description": "",
+            "endpoint": f"{base_url}/api/agent/delegate/{agent_id}",
             **config,
         }
         data[agent_id] = agent
@@ -50,6 +56,14 @@ def create_agent(owner: str, config: dict) -> dict:
 def get_agent(agent_id: str) -> Optional[dict]:
     with _lock:
         return _load().get(agent_id)
+
+
+def get_agent_by_room(room_name: str) -> Optional[dict]:
+    with _lock:
+        for agent in _load().values():
+            if agent.get("room_name") == room_name:
+                return agent
+        return None
 
 
 def list_agents(owner: str) -> List[dict]:
