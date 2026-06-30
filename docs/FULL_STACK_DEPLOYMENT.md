@@ -1,5 +1,7 @@
 # VoiceVault Full Stack Deployment Guide
 
+> Legacy Render/Vercel guide. The active production plan is [AWS_DEPLOYMENT_PLAN.md](AWS_DEPLOYMENT_PLAN.md).
+
 Complete guide for deploying VoiceVault to production:
 - **Backend**: Render (Docker)
 - **Frontend**: Vercel

@@ -1,5 +1,7 @@
 # VoiceVault Backend Deployment Guide - Render
 
+> Legacy Render-specific guide. The active production plan is [AWS_DEPLOYMENT_PLAN.md](AWS_DEPLOYMENT_PLAN.md).
+
 This guide covers deploying the VoiceVault backend to [Render](https://render.com) using Docker.
 
 ## Prerequisites

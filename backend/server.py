@@ -25,6 +25,41 @@ load_dotenv(dotenv_path=BACKEND_DIR / ".env")
 load_dotenv(dotenv_path=BACKEND_DIR.parent / ".env")
 load_dotenv(dotenv_path=BACKEND_DIR.parent / "frontend" / ".env")
 
+_TRUE_VALUES = {"1", "true", "yes", "on"}
+_DEFAULT_CORS_ORIGINS = [
+    "http://localhost:3000",
+    "http://localhost:5173",
+    "http://localhost:8000",
+]
+
+
+def _env_bool(name: str, default: bool = False) -> bool:
+    value = os.getenv(name)
+    if value is None:
+        return default
+    return value.strip().lower() in _TRUE_VALUES
+
+
+def _parse_env_list(name: str, default: list[str]) -> list[str]:
+    value = os.getenv(name, "").strip()
+    if not value:
+        return default
+    try:
+        parsed = json.loads(value)
+        if isinstance(parsed, list):
+            return [str(item).strip().rstrip("/") for item in parsed if str(item).strip()]
+    except json.JSONDecodeError:
+        pass
+    return [item.strip().rstrip("/") for item in value.split(",") if item.strip()]
+
+
+def _storage_dir() -> Path:
+    return Path(os.getenv("VOICEVAULT_STORAGE_DIR", str(BACKEND_DIR / "storage"))).expanduser()
+
+
+def _agent_worker_supervised_externally() -> bool:
+    return _env_bool("LIVEKIT_AGENT_EXTERNAL", False) or not _env_bool("LIVEKIT_AGENT_MANAGED", True)
+
 import voice_model
 import walrus as walrus_module
 import agent_store
@@ -38,13 +73,22 @@ walrus_module._ensure_storage_dirs()
 
 app = FastAPI()
 
+CORS_ORIGINS = _parse_env_list("CORS_ORIGINS", _DEFAULT_CORS_ORIGINS)
+CORS_ALLOW_CREDENTIALS = _env_bool("CORS_ALLOW_CREDENTIALS", True) and "*" not in CORS_ORIGINS
+
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
-    allow_credentials=True,
+    allow_origins=CORS_ORIGINS,
+    allow_origin_regex=os.getenv("CORS_ALLOW_ORIGIN_REGEX") or None,
+    allow_credentials=CORS_ALLOW_CREDENTIALS,
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+
+@app.get("/healthz")
+async def healthz():
+    return {"ok": True}
 
 
 def _download_preview_from_walrus(model_uri: str):
@@ -196,11 +240,11 @@ _mcp_server_log_handle = None
 
 
 def _agent_worker_log_path() -> Path:
-    return BACKEND_DIR / "storage" / "agent_worker.log"
+    return _storage_dir() / "agent_worker.log"
 
 
 def _mcp_server_log_path() -> Path:
-    return BACKEND_DIR / "storage" / "agent_network_mcp.log"
+    return _storage_dir() / "agent_network_mcp.log"
 
 
 def _close_agent_worker_log() -> None:
@@ -305,6 +349,9 @@ def _ensure_agent_worker() -> tuple[bool, bool, str | None]:
         time.sleep(float(os.getenv("MCP_STARTUP_GRACE_SECONDS", "1")))
     if not mcp_running and os.getenv("AGENT_NETWORK_MCP_REQUIRED", "false").lower() in {"1", "true", "yes"}:
         return False, False, mcp_error or "Agent Network MCP server is not running"
+
+    if _agent_worker_supervised_externally():
+        return True, False, None
 
     if _agent_worker_process is not None:
         exit_code = _agent_worker_process.poll()
@@ -753,8 +800,20 @@ async def voice_process(
 async def walrus_upload(request: Request):
     try:
         form = await request.form()
-        account = request.headers.get("x-sui-account") or str(form.get("owner") or "")
+        account = request.headers.get("x-sui-account") or request.headers.get("x-aptos-account") or str(form.get("owner") or "")
         voice_id = request.headers.get("x-voice-id") or str(form.get("voiceId") or "")
+        legacy_uri = request.headers.get("x-walrus-uri")
+
+        if legacy_uri:
+            match = re.match(r"^walrus://([^/]+)/([^/]+)/(.+)$", legacy_uri)
+            if not match:
+                return JSONResponse({"error": "Invalid Walrus URI format"}, status_code=400)
+
+            parsed_account, _namespace, parsed_voice_id = match.group(1), match.group(2), match.group(3)
+            if account and parsed_account.lower() != account.lower():
+                return JSONResponse({"error": "Account mismatch"}, status_code=403)
+            account = account or parsed_account
+            voice_id = voice_id or parsed_voice_id
 
         if not account or not voice_id:
             return JSONResponse({"error": "Sui account and voice ID are required"}, status_code=400)
@@ -798,104 +857,6 @@ async def walrus_blob(blob_id: str):
     except Exception as err:
         print(f"[API] Walrus blob error: {err}")
         return JSONResponse({"error": "Walrus blob fetch failed", "message": str(err)}, status_code=500)
-
-
-@app.post("/api/walrus/download")
-async def walrus_download(request: Request):
-    try:
-        data = await request.json()
-        uri = data.get("uri")
-        filename = data.get("filename")
-        requester_account = data.get("requesterAccount")
-        voice_object_id = data.get("voiceObjectId")
-        purchase_tx_hash = data.get("purchaseTxHash")
-        creator_address = data.get("creatorAddress")
-
-        if not uri or not filename:
-            return JSONResponse({"error": "URI and filename are required"}, status_code=400)
-
-        if requester_account:
-            has_access = _has_walrus_bundle_access(
-                uri,
-                requester_account,
-                voice_object_id,
-                purchase_tx_hash,
-                creator_address,
-            )
-            if not has_access:
-                return JSONResponse({"error": "Access denied"}, status_code=403)
-
-        manifest_blob_id = walrus_module.parse_walrus_uri(uri)
-        file_buffer = walrus_module.download_file(manifest_blob_id, filename)
-        return Response(content=file_buffer, media_type=_content_type_for(filename))
-    except walrus_module.WalrusFileNotFoundError as err:
-        return JSONResponse({"error": "File not found", "message": str(err)}, status_code=404)
-    except Exception as err:
-        print(f"[API] Walrus download error: name={type(err).__name__}, message={err}")
-        return JSONResponse({"error": "Walrus download failed", "message": str(err)}, status_code=500)
-
-
-@app.post("/api/walrus/delete")
-async def walrus_delete(request: Request):
-    try:
-        data = await request.json()
-        uri = data.get("uri")
-        account = data.get("account")
-
-        if not uri or not account:
-            return JSONResponse({"error": "URI and account are required"}, status_code=400)
-
-        if not uri.startswith("walrus://"):
-            return JSONResponse({"error": "Invalid URI format. Must be a Walrus URI (walrus://...)"}, status_code=400)
-
-        result = walrus_module.delete_from_walrus(uri, account)
-        return result
-    except Exception as err:
-        print(f"[API] Walrus delete error: {err}")
-        return JSONResponse({"error": "Walrus delete failed", "message": str(err)}, status_code=500)
-
-
-# ==================== Legacy Walrus Routes ====================
-
-@app.post("/api/walrus/upload")
-async def walrus_upload(request: Request):
-    try:
-        uri = request.headers.get("x-walrus-uri")
-        account = request.headers.get("x-sui-account") or request.headers.get("x-aptos-account")
-
-        if not uri or not account:
-            return JSONResponse({"error": "Walrus URI and account are required"}, status_code=400)
-
-        match = re.match(r"^walrus://([^/]+)/([^/]+)/(.+)$", uri)
-        if not match:
-            return JSONResponse({"error": "Invalid Walrus URI format"}, status_code=400)
-
-        parsed_account, namespace, voice_id = match.group(1), match.group(2), match.group(3)
-
-        if parsed_account.lower() != account.lower():
-            return JSONResponse({"error": "Account mismatch"}, status_code=403)
-
-        form = await request.form()
-        bundle_files = {}
-        for field_name in ["embedding.bin", "config.json", "meta.json", "preview.wav"]:
-            upload = form.get(field_name)
-            if upload and hasattr(upload, "read"):
-                bundle_files[field_name] = await upload.read()
-
-        if not bundle_files:
-            return JSONResponse({"error": "No files provided"}, status_code=400)
-
-        result = walrus_module.upload_to_walrus(account, namespace, voice_id, bundle_files)
-
-        return {
-            "success": True,
-            "uri": result["uri"],
-            "cid": result["cid"],
-            "size": result["size"],
-        }
-    except Exception as err:
-        print(f"[API] Walrus upload error: {err}")
-        return JSONResponse({"error": "Walrus upload failed", "message": str(err)}, status_code=500)
 
 
 @app.post("/api/walrus/download")
@@ -1008,14 +969,17 @@ async def agent_list(owner: str):
 
 @app.get("/api/agent/worker-status")
 async def agent_worker_status():
-    running = _agent_worker_process is not None and _agent_worker_process.poll() is None
+    supervised_externally = _agent_worker_supervised_externally()
+    process_running = _agent_worker_process is not None and _agent_worker_process.poll() is None
     mcp_running = (_mcp_server_process is not None and _mcp_server_process.poll() is None) or _is_port_open(
         os.getenv("MCP_HOST", "127.0.0.1"),
         int(os.getenv("MCP_PORT", "8001")),
     )
     return {
-        "running": running,
-        "pid": _agent_worker_process.pid if running else None,
+        "running": True if supervised_externally else process_running,
+        "processRunning": process_running,
+        "supervisedExternally": supervised_externally,
+        "pid": _agent_worker_process.pid if process_running else None,
         "logPath": str(_agent_worker_log_path()),
         "agentName": livekit_service.LIVEKIT_AGENT_NAME,
         "mcpRunning": mcp_running,
@@ -1371,6 +1335,6 @@ async def x402_passes(user: str):
 
 
 if __name__ == "__main__":
-    port = int(os.environ.get("PORT", 3000))
+    port = int(os.environ.get("PORT", 8000))
     print(f"Voice server running -> http://localhost:{port}")
     uvicorn.run(app, host="0.0.0.0", port=port)

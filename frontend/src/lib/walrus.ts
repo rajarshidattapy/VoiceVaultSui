@@ -19,7 +19,7 @@ export interface VoiceManifest {
 }
 
 const getBackendBaseUrl = () => {
-  return import.meta.env.VITE_API_URL || import.meta.env.VITE_PROXY_URL || "http://localhost:3000";
+  return import.meta.env.VITE_PROXY_URL || import.meta.env.VITE_API_URL || import.meta.env.VITE_BACKEND_URL || "http://localhost:8000";
 };
 
 const AGGREGATOR_URL =
