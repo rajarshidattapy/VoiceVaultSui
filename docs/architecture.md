@@ -4,7 +4,7 @@ This document describes the current repository architecture for VoiceVault Sui. 
 
 VoiceVault is a Web3 voice marketplace and voice-agent platform on Sui. Creators process a voice sample, store the generated voice bundle through the backend's Walrus integration, register the bundle URI on-chain, sell access in the marketplace, and can configure LiveKit-based voice agents from their registered voice metadata.
 
-This is an implementation document, not a product roadmap. In particular, the current voice bundle contains a placeholder embedding, Murf generates marketplace TTS, and LiveKit agents speak with the configured OpenAI Realtime voice rather than the creator's uploaded voice. Those boundaries are called out below.
+This is an implementation document, not a product roadmap. The current voice bundle still contains a placeholder embedding, but marketplace TTS and direct cloning now use the local LuxTTS/ZipVoice runtime in `backend/tts`. LiveKit agents continue to speak with the configured OpenAI Realtime voice rather than the creator's uploaded voice. Those boundaries are called out below.
 
 ## System At A Glance
 
@@ -19,7 +19,7 @@ Browser
 FastAPI backend
   voice processing
   Walrus proxy and local/remote storage
-  Murf TTS bridge
+  local LuxTTS voice-cloning adapter
   x402 payment verification and local usage passes
   agent create/deploy/join APIs
         |
@@ -29,8 +29,8 @@ FastAPI backend
         +---------------------> Walrus Publisher/Aggregator
         |                       voice bundle blobs and manifests
         |
-        +---------------------> Murf API
-        |                       generated speech
+        +---- loads local ----> LuxTTS and local ASR model directories
+        |                       cloned 48 kHz WAV output
         |
         +---------------------> LiveKit Cloud
         |                       real-time agent rooms
@@ -49,7 +49,7 @@ The active runtime is centered on:
 - `deploy/` and root deployment files: Render, Vercel, AWS ECS/Amplify examples.
 - `docs/`: setup, deployment, data-flow, and integration notes.
 
-`agentmcp/backend/` is a legacy/prototype backend. It contains an older SQLite-centered SwaraOS/Monad-era API, Sarvam/Chatterbox integrations, and duplicated agent files. The root `Dockerfile`, `render.yaml`, and frontend API clients target the active `backend/` implementation. There is no root `README.md` in the current repository.
+`backend/agentmcp/backend/` is a legacy/prototype backend. It contains an older SQLite-centered SwaraOS/Monad-era API and duplicated storage/agent files. Its TTS calls now delegate to the same local LuxTTS adapter, but its persistence and Monad-era x402 flow remain separate. The root `Dockerfile`, `render.yaml`, and frontend API clients target the active `backend/` implementation. There is no root `README.md` in the current repository.
 
 ## Repository Map
 
@@ -62,6 +62,8 @@ VoiceVaultSui/
   backend/
     server.py                 Active FastAPI server
     voice_model.py            Audio normalization, placeholder embedding, bundle creation
+    tts_service.py            Local LuxTTS reference-audio cloning adapter
+    tts/                      Vendored LuxTTS/ZipVoice inference runtime
     walrus.py                 Walrus/local storage abstraction and access checks
     x402.py                   Sui payment-proof verification for HTTP 402 flow
     usage_store.py            JSON-backed usage-pass store
@@ -98,9 +100,8 @@ VoiceVaultSui/
       x402_payment.move
     tests/
 
-  agentmcp/
-    backend/                  Legacy/prototype backend
-    monad_readme.md           Older product/readme material
+    agentmcp/
+      backend/                Legacy/prototype backend
 
   deploy/
     vercel.env.example
@@ -228,7 +229,7 @@ It exposes:
 
 `frontend/src/lib/walrus.ts` can fetch manifests and blobs directly from the configured aggregator URL. When `VITE_WALRUS_AGGREGATOR_URL` points at the backend proxy, blob reads go through `GET /api/walrus/blobs/{blob_id}`.
 
-`frontend/src/lib/omniVoice.ts` is an isolated Gradio/Hugging Face helper for OmniVoice design and cloning. It is not imported by the current UI. `chatterbox.ts` is only a compatibility re-export of the Murf helper; the Upload page's card labelled "Clone Your Voice with Chatterbox" calls `murfVoiceClone`, which does not send its recorded/uploaded audio to Murf.
+`backendApi.cloneTTS` submits a reference recording and text to `POST /api/tts/clone`. The Upload page uses this endpoint for direct LuxTTS cloning; it no longer has a browser-side or hosted TTS-provider integration.
 
 ### Frontend Persistence
 
@@ -366,10 +367,7 @@ The current blob layer is content-addressed, not private storage. The marketplac
 
 ### TTS And Access Control
 
-`POST /api/tts/generate` supports:
-
-- `murf://...` URIs: direct Murf TTS.
-- `walrus://...` URIs: access-checked voice usage, then Murf TTS.
+`POST /api/tts/generate` accepts a registered `walrus://...` voice bundle. It does not accept a generic/provider URI.
 
 For `walrus://` models the backend requires `requesterAccount` and checks access in this order:
 
@@ -381,17 +379,17 @@ For `walrus://` models the backend requires `requesterAccount` and checks access
 
 If none pass, the backend returns HTTP 402 with payment requirements from `x402.make_402_response`.
 
-After access passes, the backend verifies that `embedding.bin` and `config.json` are present, then calls Murf. Current synthesized output is configured by `MURF_VOICE_ID` or request fields. The stored voice embedding and preview are validation artifacts only; they are not supplied to Murf and do not drive custom voice cloning.
+After access passes, the backend verifies that `embedding.bin`, `config.json`, and `preview.wav` are present. It passes the preview audio to `tts_service.synthesize`, which lazy-loads the local LuxTTS model, extracts a voice prompt, and returns a 48 kHz WAV. `POST /api/tts/clone` uses the same service for a directly uploaded reference sample.
 
-Important implementation note: `frontend/src/lib/murfVoice.ts` has a `murfVoiceClone` helper, but it currently ignores the uploaded reference audio and delegates to normal backend Murf TTS.
+LuxTTS requires these locally provisioned directories: `VOICEVAULT_TTS_MODEL_PATH` for its checkpoint/vocoder/token files and `VOICEVAULT_TTS_ASR_MODEL_PATH` for the prompt-transcription model. The API deliberately fails with HTTP 503 when either runtime is unavailable; it does not fall back to a hosted TTS provider.
 
 ### AI Execution Split
 
-The app has two separate AI paths. They share creator/agent metadata, but neither performs voice cloning from the stored bundle today.
+The app has two separate AI paths. They share creator/agent metadata, but only the marketplace/direct-clone path uses the stored reference audio for voice cloning today.
 
 | Path | Input | Active model/service | Output | What the Walrus voice bundle contributes today |
 | --- | --- | --- | --- | --- |
-| Marketplace TTS | Text plus a `murf://` or authorized `walrus://` URI | Murf HTTP API | Audio response from `/api/tts/generate` | Access check and presence check for `embedding.bin`/`config.json`; no embedding inference or custom voice conditioning |
+| Marketplace TTS | Text plus an authorized `walrus://` URI | Local LuxTTS/ZipVoice runtime | 48 kHz WAV from `/api/tts/generate` | The bundle's `preview.wav` is the clone reference; `embedding.bin` is checked for bundle completeness but is not model input |
 | Live voice agent | A LiveKit room's standard-participant audio | OpenAI Realtime through `livekit-plugins-openai` | LiveKit agent audio and conversation | `voice_name` is placed in instructions; the bundle itself is not loaded or used for speech |
 
 Voice processing is likewise deterministic preparation rather than model training: FFmpeg normalization is attempted, then `voice_model.py` derives a SHA-256-based 256-float placeholder embedding. This provides a stable bundle shape for the marketplace but is not a trainable or production speaker representation.
@@ -459,7 +457,7 @@ LiveKit is optional at this boundary. If LiveKit credentials are absent, the API
 - Provides a `transfer_call_to_agent` tool for live handoff.
 - Can park the source agent silently after a handoff.
 
-The runtime always constructs `lk_openai.realtime.RealtimeModel(voice=OPENAI_REALTIME_VOICE)`. The user-selected `llm_provider` is stored in the agent configuration but is not used to select the active LiveKit model. Similarly, `voice_uri`, `voice_id`, and `voice_name` are stored; only `voice_name` currently appears in the agent instructions. The worker does not download the Walrus bundle, call Murf, or synthesize with the creator's voice.
+The runtime always constructs `lk_openai.realtime.RealtimeModel(voice=OPENAI_REALTIME_VOICE)`. The user-selected `llm_provider` is stored in the agent configuration but is not used to select the active LiveKit model. Similarly, `voice_uri`, `voice_id`, and `voice_name` are stored; only `voice_name` currently appears in the agent instructions. The worker does not download the Walrus bundle or synthesize with the creator's LuxTTS voice.
 
 `swaraos_mcp_server.py` exposes MCP tools:
 
@@ -636,7 +634,7 @@ POST /api/tts/generate
   |
   | backend checks LicensePass ownership through Sui RPC
   | backend checks Walrus bundle files
-  | backend calls Murf
+  | backend clones from preview.wav with local LuxTTS
   v
 audio blob returned to browser
 ```
@@ -659,7 +657,7 @@ POST /api/tts/generate
   |
   | backend finds usage pass
   | consumes one use
-  | calls Murf
+  | clones from preview.wav with local LuxTTS
   v
 audio returned
 ```
@@ -747,7 +745,8 @@ backendApi.deleteModelBundle
 | Method | Endpoint | Purpose |
 | --- | --- | --- |
 | `GET` | `/healthz` | Health check |
-| `POST` | `/api/tts/generate` | Generate TTS for `murf://` or access-checked `walrus://` voice |
+| `POST` | `/api/tts/generate` | Generate access-checked TTS for a registered `walrus://` voice bundle |
+| `POST` | `/api/tts/clone` | Clone a multipart reference audio sample with local LuxTTS |
 | `POST` | `/api/payment/breakdown` | Calculate display payment breakdown |
 | `POST` | `/api/voice/process` | Process uploaded audio and store a Walrus bundle |
 | `POST` | `/api/walrus/upload` | Upload a bundle directly |
@@ -791,10 +790,9 @@ VITE_PROXY_URL=
 VITE_BACKEND_URL=
 VITE_WALRUS_AGGREGATOR_URL=
 VITE_SUI_VOICE_REGISTRY_ID=
-VITE_OMNI_VOICE_SPACE=
 ```
 
-`VITE_OMNI_VOICE_SPACE` is read only by the currently unused `omniVoice.ts` helper. The current wallet provider hard-codes Sui testnet as its default network and the active package ID is hard-coded in `frontend/src/lib/contracts.ts`; consequently, `VITE_SUI_NETWORK`, `VITE_SUI_RPC_URL`, and `VITE_SUI_PACKAGE_ID` in `.env.example` are not active runtime configuration today.
+The current wallet provider hard-codes Sui testnet as its default network and the active package ID is hard-coded in `frontend/src/lib/contracts.ts`; consequently, `VITE_SUI_NETWORK`, `VITE_SUI_RPC_URL`, and `VITE_SUI_PACKAGE_ID` in `.env.example` are not active runtime configuration today.
 
 ### Backend Core
 
@@ -834,20 +832,18 @@ WALRUS_DELETABLE=
 WALRUS_MAX_BLOB_SIZE=
 ```
 
-### TTS
+### Local TTS
 
 ```env
-MURF_API_KEY=
-MURF_KEY=
-MURF_VOICE_ID=
-MURF_LOCALE=
-MURF_FORMAT=
-MURF_SAMPLE_RATE=
-MURF_MODEL_VERSION=
-MURF_STYLE=
-MURF_PITCH=
-MURF_RATE=
-MURF_VARIATION=
+VOICEVAULT_TTS_MODEL_PATH=
+VOICEVAULT_TTS_ASR_MODEL_PATH=
+VOICEVAULT_TTS_DEVICE=
+VOICEVAULT_TTS_THREADS=
+VOICEVAULT_TTS_REFERENCE_SECONDS=
+VOICEVAULT_TTS_NUM_STEPS=
+VOICEVAULT_TTS_GUIDANCE_SCALE=
+VOICEVAULT_TTS_T_SHIFT=
+VOICEVAULT_TTS_SPEED=
 ```
 
 ### LiveKit And Agent Network
@@ -951,7 +947,7 @@ The AWS docs indicate a production target of:
 ### What Is Backend-Trusted
 
 - Audio processing and bundle creation.
-- Murf API calls.
+- Local LuxTTS model loading and inference.
 - Local Walrus mode.
 - Local x402 usage passes.
 - Agent configs in `agents.json`.
@@ -965,22 +961,22 @@ The AWS docs indicate a production target of:
 - Move x402 usage passes fully on-chain if backend-local passes are not acceptable.
 - Add server-side rate limiting for TTS and upload endpoints.
 - Keep CORS restricted in production.
-- Keep Murf, LiveKit, OpenAI, and wallet/private keys out of frontend env.
+- Keep local model paths, LiveKit/OpenAI credentials, and wallet/private keys out of frontend env.
 - Remote Walrus deletion currently requires wallet-signed Sui operations and is not implemented by the backend helper.
 - `agent_store.py` and `usage_store.py` are JSON-file stores; use a real database or durable shared volume for multi-instance deployment.
 - Authenticate and authorize Walrus blob/manifest delivery before treating stored voice assets as private.
 - Add an enforced payment gate for `join`/`talk` if agent-level x402 and per-call pricing are intended to charge callers.
 - Use the selected agent provider and registered voice bundle in the LiveKit worker, or remove those fields from the deployment UI until they are supported.
 
-## Legacy `agentmcp/backend`
+## Legacy `backend/agentmcp/backend`
 
-`agentmcp/backend/` is retained but is not the active backend used by the root deployment files. It includes:
+`backend/agentmcp/backend/` is retained but is not the active backend used by the root deployment files. It includes:
 
 - A separate FastAPI app titled `SwaraOS API`.
 - SQLite persistence in `storage/voicevault.db`.
 - Legacy endpoints such as `/api/voice/upload`, `/api/voice/list`, `/api/audio/{voice_id}`.
 - Monad/Web3-era x402 verification in its `x402.py`.
-- Sarvam and Chatterbox integrations.
+- A local LuxTTS adapter shared from the active backend; its STT endpoint is disabled because no local STT endpoint is configured.
 - A copy of Walrus/storage and agent modules that diverges from active `backend/`.
 
 Treat it as historical/prototype code unless a task explicitly targets it.
@@ -989,8 +985,7 @@ Treat it as historical/prototype code unless a task explicitly targets it.
 
 - Active marketplace discovery is chain-derived, not database-derived.
 - Frontend registration prevents more than one voice per wallet, but the Move contract itself does not enforce uniqueness.
-- The backend TTS path verifies bundle files but uses Murf for actual output; the stored embedding is not yet used for synthesis.
-- `murfVoiceClone` currently ignores the uploaded sample and performs regular Murf TTS.
+- The backend TTS path verifies bundle files and passes `preview.wav` to the local LuxTTS cloner. The stored placeholder embedding is not used for synthesis.
 - The LiveKit agent worker uses `OPENAI_REALTIME_VOICE`, not the registered creator voice; the selected `llm_provider` and agent x402 fields are not enforced by the live-call runtime.
 - Walrus bundle blobs are currently retrievable through the configured aggregator/proxy; access control applies to the TTS endpoint, not confidential asset delivery.
 - `payment::pay_with_royalty_split` mints `LicensePass` in the current source, but frontend code still supports older deployments that did not.

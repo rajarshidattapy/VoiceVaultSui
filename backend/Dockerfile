@@ -4,8 +4,17 @@ FROM python:3.11-slim
 # Set working directory
 WORKDIR /app
 
-# Copy dependencies file
+# LuxTTS dependencies need FFmpeg/audio libraries, and its tokenizer dependency
+# is installed from a Git source.
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    ffmpeg \
+    git \
+    libsndfile1 \
+    && rm -rf /var/lib/apt/lists/*
+
+# Copy dependency manifests before the application for cacheable installs.
 COPY requirements.txt .
+COPY tts/requirements.txt ./tts/requirements.txt
 
 # Install dependencies
 RUN pip install --no-cache-dir -r requirements.txt

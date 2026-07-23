@@ -12,7 +12,6 @@ import torch
 import librosa
 import torchaudio
 from transformers import pipeline
-from huggingface_hub import snapshot_download
 from lhotse.utils import fix_random_seed
 
 from zipvoice.models.zipvoice_distill import ZipVoiceDistill
@@ -90,16 +89,18 @@ def generate(prompt_tokens, prompt_features_lens, prompt_features, prompt_rms, t
 
     return wav
 
-def load_models_gpu(model_path=None, device="cuda"):
+def load_models_gpu(model_path, device="cuda", asr_model_path=None):
     params = LuxTTSConfig()
-    if model_path is None:
-        model_path = snapshot_download("YatharthS/LuxTTS")
+    if not model_path:
+        raise ValueError("model_path must point to a local LuxTTS model directory")
+    if not asr_model_path:
+        raise ValueError("asr_model_path must point to a local ASR model directory")
 
     token_file = f"{model_path}/tokens.txt"
     model_ckpt = f"{model_path}/model.pt"
     model_config = f"{model_path}/config.json"
 
-    transcriber = pipeline("automatic-speech-recognition", model="openai/whisper-base", device=device)
+    transcriber = pipeline("automatic-speech-recognition", model=asr_model_path, device=device)
     tokenizer = EmiliaTokenizer(token_file=token_file)
     tokenizer_config = {"vocab_size": tokenizer.vocab_size, "pad_id": tokenizer.pad_id}
 
@@ -124,18 +125,20 @@ def load_models_gpu(model_path=None, device="cuda"):
     params.sampling_rate = model_config["feature"]["sampling_rate"]
     return model, feature_extractor, vocos, tokenizer, transcriber
 
-def load_models_cpu(model_path = None, num_thread=2):
+def load_models_cpu(model_path, num_thread=2, asr_model_path=None):
     params = LuxTTSConfig()
     params.seed = 42
-
-    model_path = snapshot_download('YatharthS/LuxTTS')
+    if not model_path:
+        raise ValueError("model_path must point to a local LuxTTS model directory")
+    if not asr_model_path:
+        raise ValueError("asr_model_path must point to a local ASR model directory")
 
     token_file = f"{model_path}/tokens.txt"
     text_encoder_path = f"{model_path}/text_encoder.onnx"
     fm_decoder_path = f"{model_path}/fm_decoder.onnx"
     model_config  = f"{model_path}/config.json"
 
-    transcriber = pipeline("automatic-speech-recognition", model="openai/whisper-tiny", device='cpu')
+    transcriber = pipeline("automatic-speech-recognition", model=asr_model_path, device='cpu')
 
     tokenizer = EmiliaTokenizer(token_file=token_file)
     tokenizer_config = {"vocab_size": tokenizer.vocab_size, "pad_id": tokenizer.pad_id}

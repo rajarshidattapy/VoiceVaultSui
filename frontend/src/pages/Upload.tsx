@@ -51,7 +51,7 @@ const Upload = () => {
   const [autoName, setAutoName] = useState("");
   const [autoModelUri, setAutoModelUri] = useState("");
 
-  // ------------------- Voice Cloning (Murf) -------------------
+  // ------------------- Voice Cloning (local LuxTTS) -------------------
   const [cloneRecording, setCloneRecording] = useState(false);
   const [cloneRecordedAudio, setCloneRecordedAudio] = useState<File | null>(null);
   const [cloneText, setCloneText] = useState("");
@@ -173,7 +173,7 @@ const Upload = () => {
     setTtsLoading(true);
     try {
       const { backendApi } = await import("@/lib/api");
-      toast.info("Generating speech via Murf...");
+      toast.info("Generating speech with LuxTTS...");
       const selectedVoice = purchasedVoices.find((voice) => voice.modelUri === selectedPurchasedVoice);
 
       const audioBlob = await backendApi.generateTTS(
@@ -252,16 +252,16 @@ const Upload = () => {
     }
   };
 
-  // ------------------- Clone Voice & Generate (Murf) -------------------
+  // ------------------- Clone Voice & Generate (local LuxTTS) -------------------
   const handleCloneAndGenerate = async () => {
     if (!cloneRecordedAudio) { toast.error("Please record or upload a voice sample first"); return; }
     if (!cloneText.trim()) { toast.error("Please enter the text you want your voice to say"); return; }
 
     setCloneLoading(true);
     try {
-      const { murfVoiceClone } = await import("@/lib/murfVoice");
-      toast.info("Cloning your voice and generating speech...");
-      const audioBlob = await murfVoiceClone(cloneText.trim(), cloneRecordedAudio);
+      const { backendApi } = await import("@/lib/api");
+      toast.info("Cloning your voice with LuxTTS...");
+      const audioBlob = await backendApi.cloneTTS(cloneRecordedAudio, cloneText.trim());
       setCloneOutputAudio(URL.createObjectURL(audioBlob));
       toast.success("Done! Your voice is speaking the text you wrote.");
     } catch (err: any) {
@@ -402,10 +402,10 @@ const Upload = () => {
             </CardContent>
           </Card>
 
-          {/* ------------------- Clone Your Voice with Chatterbox ------------------- */}
+          {/* ------------------- Clone Your Voice with LuxTTS ------------------- */}
           <Card>
             <CardHeader>
-              <CardTitle>🎤 Clone Your Voice with Chatterbox</CardTitle>
+              <CardTitle>🎤 Clone Your Voice with LuxTTS</CardTitle>
               <CardDescription>
                 Record or upload your voice sample, enter the text you want it to say, then click Clone Voice.
               </CardDescription>

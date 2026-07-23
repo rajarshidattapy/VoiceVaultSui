@@ -1,4 +1,5 @@
 import atexit
+import asyncio
 import hashlib
 import math
 import os
@@ -18,6 +19,10 @@ BACKEND_DIR = Path(__file__).resolve().parent
 load_dotenv(dotenv_path=BACKEND_DIR.parent / ".env")
 load_dotenv(dotenv_path=BACKEND_DIR / ".env")
 
+CANONICAL_BACKEND_DIR = BACKEND_DIR.parent.parent
+if str(CANONICAL_BACKEND_DIR) not in sys.path:
+    sys.path.insert(0, str(CANONICAL_BACKEND_DIR))
+
 import database
 import voice_model
 import x402 as x402_module
@@ -26,8 +31,7 @@ import agent_store
 import agent_index
 import livekit_service
 import payment as payment_module
-import sarvam
-import chatterbox
+import tts_service
 
 AUDIO_DIR = BACKEND_DIR / "storage" / "audio"
 PREVIEW_DIR = BACKEND_DIR / "storage" / "previews"
@@ -239,13 +243,13 @@ async def tts_generate(request: Request):
             if has_pass and active_pass_id and not has_lic:
                 usage_store.consume_pass(active_pass_id)
 
-        try:
-            audio_bytes = chatterbox.text_to_speech(text, record["audio_path"])
-        except Exception as tts_err:
-            print(f"[TTS] Chatterbox failed ({tts_err}), falling back to Sarvam")
-            language_code = data.get("language_code", "en-IN")
-            audio_bytes = sarvam.text_to_speech(text, language_code=language_code)
+        reference_path = Path(record["audio_path"])
+        if not reference_path.exists():
+            return JSONResponse({"error": "Voice reference audio not found"}, status_code=404)
+        audio_bytes = await asyncio.to_thread(tts_service.synthesize, text, reference_path.read_bytes())
         return Response(content=audio_bytes, media_type="audio/wav")
+    except tts_service.TTSServiceError as err:
+        return JSONResponse({"error": "Local TTS unavailable", "message": str(err)}, status_code=503)
     except Exception as err:
         print(f"[TTS] error: {err}")
         return JSONResponse({"error": "TTS failed", "message": str(err)}, status_code=500)
@@ -258,16 +262,10 @@ async def stt_transcribe(
     audio: UploadFile = File(...),
     language_code: str = Form("en-IN"),
 ):
-    try:
-        audio_bytes = await audio.read()
-        if not audio_bytes:
-            return JSONResponse({"error": "Empty audio file"}, status_code=400)
-
-        transcript = sarvam.speech_to_text(audio_bytes, language_code=language_code)
-        return {"transcript": transcript, "language_code": language_code}
-    except Exception as err:
-        print(f"[STT] error: {err}")
-        return JSONResponse({"error": "Transcription failed", "message": str(err)}, status_code=500)
+    return JSONResponse(
+        {"error": "STT is not configured. The active local integration provides LuxTTS voice cloning only."},
+        status_code=501,
+    )
 
 
 # ==================== Payment ====================
@@ -436,7 +434,7 @@ async def agent_register_skill(request: Request):
 async def agent_call(agent_id: str, request: Request):
     """
     Delegated TTS endpoint — callable by other agents or humans.
-    Applies x402 access control and calls Sarvam TTS on behalf of the agent's voice.
+    Applies x402 access control and calls local LuxTTS on behalf of the agent's voice.
     """
     try:
         data = await request.json()
@@ -475,14 +473,20 @@ async def agent_call(agent_id: str, request: Request):
 
             database.record_payment_proof(payment_proof, requester)
 
-        # Generate speech
-        lang = language_code or agent.get("language", "en-IN")
-        audio_bytes = sarvam.text_to_speech(text, language_code=lang)
+        # Generate speech from the agent's locally stored voice reference.
+        if not record:
+            return JSONResponse({"error": "Agent voice reference not found"}, status_code=404)
+        reference_path = Path(record["audio_path"])
+        if not reference_path.exists():
+            return JSONResponse({"error": "Agent voice reference audio not found"}, status_code=404)
+        audio_bytes = await asyncio.to_thread(tts_service.synthesize, text, reference_path.read_bytes())
 
         # Track call metrics
         agent_index.increment_calls(agent_id, earned_wei=price_per_call_wei)
 
         return Response(content=audio_bytes, media_type="audio/wav")
+    except tts_service.TTSServiceError as err:
+        return JSONResponse({"error": "Local TTS unavailable", "message": str(err)}, status_code=503)
     except Exception as err:
         print(f"[AgentCall] error: {err}")
         return JSONResponse({"error": "Agent call failed", "message": str(err)}, status_code=500)

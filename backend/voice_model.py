@@ -13,10 +13,12 @@ NOTE: This is a simplified implementation. In production, you would:
 """
 
 import hashlib
+import io
 import json
 import struct
 import subprocess
 import time
+import wave
 
 
 def normalize_audio(audio_buffer, mime_type="audio/wav"):
@@ -149,9 +151,9 @@ def create_voice_bundle(name, description, owner, voice_id, normalized_audio, em
     if preview_audio:
         bundle_files["preview.wav"] = preview_audio
     else:
-        # Fallback: use entire normalized audio or first portion as preview
+        # Fallback: keep the normalized source intact if preview extraction failed.
         print("[VoiceModel] Using normalized audio as preview")
-        bundle_files["preview.wav"] = normalized_audio[:min(len(normalized_audio), 160000)]  # ~5 seconds at 16kHz
+        bundle_files["preview.wav"] = normalized_audio
 
     return {
         "files": bundle_files,
@@ -174,16 +176,21 @@ def process_voice_model(audio_buffer, mime_type, name, description, owner, voice
         print("[VoiceModel] Generating voice embedding...")
         embedding = generate_embedding(normalized_audio)
 
-        # Step 3: Extract preview (first 5 seconds, optional)
+        # Step 3: Extract a valid five-second WAV preview for LuxTTS. Byte
+        # slicing a WAV leaves its header inconsistent with the payload.
         preview_audio = None
         try:
-            # Extract first 5 seconds for preview (16kHz mono WAV = 16000 * 2 bytes/second * 5)
-            preview_duration = 5  # seconds
-            preview_size = 16000 * 2 * preview_duration  # 16-bit PCM = 2 bytes/sample
-            if len(normalized_audio) > preview_size:
-                preview_audio = normalized_audio[:preview_size]
+            with wave.open(io.BytesIO(normalized_audio), "rb") as source:
+                preview_duration = 5
+                frame_count = min(source.getnframes(), source.getframerate() * preview_duration)
+                frames = source.readframes(frame_count)
+                preview_stream = io.BytesIO()
+                with wave.open(preview_stream, "wb") as preview:
+                    preview.setparams(source.getparams())
+                    preview.writeframes(frames)
+                preview_audio = preview_stream.getvalue()
         except Exception as error:
-            print(f"[VoiceModel] Preview extraction failed, continuing without preview: {error}")
+            print(f"[VoiceModel] Preview extraction failed, using normalized audio: {error}")
 
         # Step 4: Create bundle
         print("[VoiceModel] Creating voice bundle...")

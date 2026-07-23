@@ -49,6 +49,10 @@
         {"name": "PYTHONDONTWRITEBYTECODE", "value": "1"},
         {"name": "BACKEND_URL", "value": "https://REPLACE_WITH_BACKEND_HOST"},
         {"name": "VOICEVAULT_STORAGE_DIR", "value": "/var/lib/voicevault"},
+        {"name": "VOICEVAULT_TTS_MODEL_PATH", "value": "/var/lib/voicevault/models/lux-tts"},
+        {"name": "VOICEVAULT_TTS_ASR_MODEL_PATH", "value": "/var/lib/voicevault/models/whisper"},
+        {"name": "VOICEVAULT_TTS_DEVICE", "value": "cuda"},
+        {"name": "VOICEVAULT_TTS_THREADS", "value": "4"},
         {"name": "CORS_ORIGINS", "value": "[\"https://REPLACE_WITH_FRONTEND_HOST\",\"http://localhost:5173\"]"},
         {"name": "CORS_ALLOW_CREDENTIALS", "value": "true"},
         {"name": "SUI_NETWORK", "value": "testnet"},
@@ -81,7 +85,6 @@
         {"name": "LIVEKIT_URL", "valueFrom": "arn:aws:secretsmanager:REPLACE_REGION:REPLACE_ACCOUNT_ID:secret:voicevault/prod-REPLACE_SECRET_SUFFIX:LIVEKIT_URL::"},
         {"name": "LIVEKIT_API_KEY", "valueFrom": "arn:aws:secretsmanager:REPLACE_REGION:REPLACE_ACCOUNT_ID:secret:voicevault/prod-REPLACE_SECRET_SUFFIX:LIVEKIT_API_KEY::"},
         {"name": "LIVEKIT_API_SECRET", "valueFrom": "arn:aws:secretsmanager:REPLACE_REGION:REPLACE_ACCOUNT_ID:secret:voicevault/prod-REPLACE_SECRET_SUFFIX:LIVEKIT_API_SECRET::"},
-        {"name": "MURF_API_KEY", "valueFrom": "arn:aws:secretsmanager:REPLACE_REGION:REPLACE_ACCOUNT_ID:secret:voicevault/prod-REPLACE_SECRET_SUFFIX:MURF_API_KEY::"},
         {"name": "API_SECRET_KEY", "valueFrom": "arn:aws:secretsmanager:REPLACE_REGION:REPLACE_ACCOUNT_ID:secret:voicevault/prod-REPLACE_SECRET_SUFFIX:API_SECRET_KEY::"}
       ],
       "healthCheck": {

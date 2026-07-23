@@ -10,6 +10,4 @@ livekit-agents>=1.0.0
 livekit-plugins-openai
 livekit-plugins-silero
 openai
-sarvamai
 mcp[cli]
-gradio_client

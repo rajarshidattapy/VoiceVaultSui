@@ -10,3 +10,4 @@ livekit-agents>=1.0.0
 livekit-plugins-openai
 openai
 mcp[cli]==1.12.4
+-r tts/requirements.txt

@@ -8,10 +8,14 @@ WORKDIR /app
 RUN apt-get update && apt-get install -y \
     build-essential \
     curl \
+    ffmpeg \
+    git \
+    libsndfile1 \
     && rm -rf /var/lib/apt/lists/*
 
 # Copy requirements first (for better Docker caching)
 COPY backend/requirements.txt .
+COPY backend/tts/requirements.txt ./tts/requirements.txt
 
 # Install Python dependencies
 RUN pip install --no-cache-dir -r requirements.txt

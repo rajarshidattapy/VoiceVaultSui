@@ -7,9 +7,11 @@ class LuxTTS:
     LuxTTS class for encoding prompt and generating speech on cpu/cuda/mps.
     """
 
-    def __init__(self, model_path='YatharthS/LuxTTS', device='cuda', threads=4):
-        if model_path == 'YatharthS/LuxTTS':
-            model_path = None
+    def __init__(self, model_path, asr_model_path, device='cuda', threads=4):
+        if not model_path:
+            raise ValueError("model_path must point to a local LuxTTS model directory")
+        if not asr_model_path:
+            raise ValueError("asr_model_path must point to a local ASR model directory")
 
         # Auto-detect better device if cuda is requested but not available
         if device == 'cuda' and not torch.cuda.is_available():
@@ -21,10 +23,14 @@ class LuxTTS:
                 device = 'cpu'
 
         if device == 'cpu':
-            model, feature_extractor, vocos, tokenizer, transcriber = load_models_cpu(model_path, threads)
+            model, feature_extractor, vocos, tokenizer, transcriber = load_models_cpu(
+                model_path, threads, asr_model_path
+            )
             print("Loading model on CPU")
         else:
-            model, feature_extractor, vocos, tokenizer, transcriber = load_models_gpu(model_path, device=device)
+            model, feature_extractor, vocos, tokenizer, transcriber = load_models_gpu(
+                model_path, device=device, asr_model_path=asr_model_path
+            )
             print("Loading model on GPU")
 
         self.model = model

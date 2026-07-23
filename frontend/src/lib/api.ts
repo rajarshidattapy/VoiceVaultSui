@@ -27,6 +27,7 @@ export const BACKEND_CONFIG = {
     WALRUS_UPLOAD: "/api/walrus/upload",
     WALRUS_DOWNLOAD: "/api/walrus/download",
     WALRUS_DELETE: "/api/walrus/delete",
+    TTS_CLONE: "/api/tts/clone",
   },
 };
 
@@ -38,7 +39,6 @@ export const backendApi = {
     voiceObjectId?: string,
     purchaseTxHash?: string,
     creatorAddress?: string,
-    murfVoiceId?: string,
   ): Promise<Blob> {
     const response = await fetch(`${BACKEND_CONFIG.BASE_URL}${BACKEND_CONFIG.ENDPOINTS.UNIFIED_TTS}`, {
       method: "POST",
@@ -50,12 +50,28 @@ export const backendApi = {
         ...(voiceObjectId ? { voiceObjectId } : {}),
         ...(purchaseTxHash ? { purchaseTxHash } : {}),
         ...(creatorAddress ? { creatorAddress } : {}),
-        ...(murfVoiceId ? { murfVoiceId } : {}),
       }),
     });
 
     if (!response.ok) {
       await readError(response, "TTS generation failed");
+    }
+
+    return response.blob();
+  },
+
+  async cloneTTS(audioFile: File | Blob, text: string): Promise<Blob> {
+    const formData = new FormData();
+    formData.append("audio", audioFile, "reference.wav");
+    formData.append("text", text);
+
+    const response = await fetch(`${BACKEND_CONFIG.BASE_URL}${BACKEND_CONFIG.ENDPOINTS.TTS_CLONE}`, {
+      method: "POST",
+      body: formData,
+    });
+
+    if (!response.ok) {
+      await readError(response, "Voice cloning failed");
     }
 
     return response.blob();

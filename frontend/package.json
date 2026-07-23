@@ -15,7 +15,6 @@
     "start:frontend": "vite preview --port 4173"
   },
   "dependencies": {
-    "@gradio/client": "^2.1.0",
     "@hookform/resolvers": "^3.10.0",
     "@mysten/dapp-kit": "^1.0.4",
     "@mysten/sui": "^2.13.0",
