@@ -2,7 +2,9 @@
 
 This document describes the current repository architecture for VoiceVault Sui. It is written from the source code in this repo, not from an external product description.
 
-VoiceVault is a Web3 voice marketplace and voice-agent platform on Sui. Creators process a voice sample, store the generated voice bundle through the backend's Walrus integration, register the bundle URI on-chain, sell access in the marketplace, and optionally deploy LiveKit-based voice agents that use the registered voice metadata.
+VoiceVault is a Web3 voice marketplace and voice-agent platform on Sui. Creators process a voice sample, store the generated voice bundle through the backend's Walrus integration, register the bundle URI on-chain, sell access in the marketplace, and can configure LiveKit-based voice agents from their registered voice metadata.
+
+This is an implementation document, not a product roadmap. In particular, the current voice bundle contains a placeholder embedding, Murf generates marketplace TTS, and LiveKit agents speak with the configured OpenAI Realtime voice rather than the creator's uploaded voice. Those boundaries are called out below.
 
 ## System At A Glance
 
@@ -47,14 +49,12 @@ The active runtime is centered on:
 - `deploy/` and root deployment files: Render, Vercel, AWS ECS/Amplify examples.
 - `docs/`: setup, deployment, data-flow, and integration notes.
 
-`agentmcp/backend/` is a legacy/prototype backend. It contains an older SQLite-centered SwaraOS/Monad-era API, Sarvam/Chatterbox integrations, and duplicated agent files. The root README, root Dockerfile, `render.yaml`, and frontend API clients all point to the active `backend/` implementation.
+`agentmcp/backend/` is a legacy/prototype backend. It contains an older SQLite-centered SwaraOS/Monad-era API, Sarvam/Chatterbox integrations, and duplicated agent files. The root `Dockerfile`, `render.yaml`, and frontend API clients target the active `backend/` implementation. There is no root `README.md` in the current repository.
 
 ## Repository Map
 
 ```text
 VoiceVaultSui/
-  README.md
-  architecture.md
   Dockerfile
   render.yaml
   .env.example
@@ -228,6 +228,8 @@ It exposes:
 
 `frontend/src/lib/walrus.ts` can fetch manifests and blobs directly from the configured aggregator URL. When `VITE_WALRUS_AGGREGATOR_URL` points at the backend proxy, blob reads go through `GET /api/walrus/blobs/{blob_id}`.
 
+`frontend/src/lib/omniVoice.ts` is an isolated Gradio/Hugging Face helper for OmniVoice design and cloning. It is not imported by the current UI. `chatterbox.ts` is only a compatibility re-export of the Murf helper; the Upload page's card labelled "Clone Your Voice with Chatterbox" calls `murfVoiceClone`, which does not send its recorded/uploaded audio to Murf.
+
 ### Frontend Persistence
 
 The browser stores purchased voices in `localStorage` under:
@@ -237,6 +239,8 @@ voicevault_purchased_voices
 ```
 
 Records include voice IDs, object IDs, owner, buyer, model URI, transaction hash, price, and license mode. This cache is only a UX convenience. Real access is checked by the backend through owner access, `LicensePass`, usage passes, or transaction proof.
+
+The cache is not an entitlement system: it can be missing, stale, or cleared without changing an on-chain license. Conversely, a local cache entry does not itself grant backend access.
 
 ## Backend Architecture
 
@@ -356,6 +360,10 @@ Manifest shape:
 
 Large files are chunked when they exceed `WALRUS_MAX_BLOB_SIZE`; the manifest entry then contains `chunked`, `blobIds`, and `objectIds`.
 
+### Storage Visibility
+
+The current blob layer is content-addressed, not private storage. The marketplace fetches manifests, metadata, and previews directly from the configured aggregator. The backend's `GET /api/walrus/blobs/{blob_id}` proxy has no caller check, and `POST /api/walrus/download` performs an entitlement check only when a `requesterAccount` is supplied. Therefore, the current access checks protect the TTS service; they do not make uploaded bundle files confidential. Do not upload audio or embeddings that require cryptographic access control until encryption and authenticated blob delivery are implemented.
+
 ### TTS And Access Control
 
 `POST /api/tts/generate` supports:
@@ -373,9 +381,20 @@ For `walrus://` models the backend requires `requesterAccount` and checks access
 
 If none pass, the backend returns HTTP 402 with payment requirements from `x402.make_402_response`.
 
-After access passes, the backend verifies that key Walrus bundle files exist, then calls Murf. Current synthesized output is configured by `MURF_VOICE_ID` or request fields. The stored voice embedding is not yet used to drive Murf custom cloning.
+After access passes, the backend verifies that `embedding.bin` and `config.json` are present, then calls Murf. Current synthesized output is configured by `MURF_VOICE_ID` or request fields. The stored voice embedding and preview are validation artifacts only; they are not supplied to Murf and do not drive custom voice cloning.
 
 Important implementation note: `frontend/src/lib/murfVoice.ts` has a `murfVoiceClone` helper, but it currently ignores the uploaded reference audio and delegates to normal backend Murf TTS.
+
+### AI Execution Split
+
+The app has two separate AI paths. They share creator/agent metadata, but neither performs voice cloning from the stored bundle today.
+
+| Path | Input | Active model/service | Output | What the Walrus voice bundle contributes today |
+| --- | --- | --- | --- | --- |
+| Marketplace TTS | Text plus a `murf://` or authorized `walrus://` URI | Murf HTTP API | Audio response from `/api/tts/generate` | Access check and presence check for `embedding.bin`/`config.json`; no embedding inference or custom voice conditioning |
+| Live voice agent | A LiveKit room's standard-participant audio | OpenAI Realtime through `livekit-plugins-openai` | LiveKit agent audio and conversation | `voice_name` is placed in instructions; the bundle itself is not loaded or used for speech |
+
+Voice processing is likewise deterministic preparation rather than model training: FFmpeg normalization is attempted, then `voice_model.py` derives a SHA-256-based 256-float placeholder embedding. This provides a stable bundle shape for the marketplace but is not a trainable or production speaker representation.
 
 ### Payment Paths
 
@@ -394,6 +413,8 @@ There are two payment experiences:
    - TTS consumes one use when generation succeeds.
 
 The Move package also contains an on-chain `x402_payment` module with `UsagePass`, but the active frontend/backend x402 path currently uses backend-local `usage_store.py`, not that Move module.
+
+`x402.verify_sui_payment` keeps consumed transaction digests in an in-memory set, while issued passes are written to JSON. The replay guard resets when the API restarts, and the pass file is only safe for a single process with its local lock. This is MVP behavior, not an on-chain x402 settlement system.
 
 ### Agent Runtime
 
@@ -427,6 +448,8 @@ Deployment flow:
 6. Backend dispatches the configured LiveKit agent into the `vv-{agent_id}` room.
 7. Agent status becomes `live`.
 
+LiveKit is optional at this boundary. If LiveKit credentials are absent, the API returns a demo token and no join URL, but `deploy` still marks the JSON agent record `live`. A working voice call additionally requires `LIVEKIT_URL`, `LIVEKIT_API_KEY`, `LIVEKIT_API_SECRET`, and `OPENAI_API_KEY`; the worker exits at startup when any is missing.
+
 `agent_worker.py` registers a named LiveKit agent server. It:
 
 - Loads agent config from `agents.json`.
@@ -435,6 +458,8 @@ Deployment flow:
 - Optionally connects to the MCP server.
 - Provides a `transfer_call_to_agent` tool for live handoff.
 - Can park the source agent silently after a handoff.
+
+The runtime always constructs `lk_openai.realtime.RealtimeModel(voice=OPENAI_REALTIME_VOICE)`. The user-selected `llm_provider` is stored in the agent configuration but is not used to select the active LiveKit model. Similarly, `voice_uri`, `voice_id`, and `voice_name` are stored; only `voice_name` currently appears in the agent instructions. The worker does not download the Walrus bundle, call Murf, or synthesize with the creator's voice.
 
 `swaraos_mcp_server.py` exposes MCP tools:
 
@@ -445,6 +470,8 @@ Deployment flow:
 - `invite_best_agent_to_room`
 
 The active worker allows only discovery/card/delegation tools through the MCP server and implements live room transfer through its own function tool.
+
+The agent `x402_enabled`, `x402_price_sui`, `x402_uses`, and `price_per_call` fields are configuration/UI metadata. The current `deploy`, `join`, and `talk` endpoints do not verify a payment or consume a usage pass before a LiveKit caller joins.
 
 ## Move Contract Architecture
 
@@ -756,20 +783,18 @@ Only variable names are listed here. Do not commit real secrets.
 
 ### Frontend
 
-The frontend only receives variables prefixed with `VITE_`:
+Vite exposes only variables prefixed with `VITE_`. The following are read by the active frontend runtime:
 
 ```env
 VITE_API_URL=
 VITE_PROXY_URL=
 VITE_BACKEND_URL=
 VITE_WALRUS_AGGREGATOR_URL=
-VITE_SUI_NETWORK=
-VITE_SUI_RPC_URL=
-VITE_SUI_PACKAGE_ID=
 VITE_SUI_VOICE_REGISTRY_ID=
-VITE_CHATTERBOX_SPACE=
 VITE_OMNI_VOICE_SPACE=
 ```
+
+`VITE_OMNI_VOICE_SPACE` is read only by the currently unused `omniVoice.ts` helper. The current wallet provider hard-codes Sui testnet as its default network and the active package ID is hard-coded in `frontend/src/lib/contracts.ts`; consequently, `VITE_SUI_NETWORK`, `VITE_SUI_RPC_URL`, and `VITE_SUI_PACKAGE_ID` in `.env.example` are not active runtime configuration today.
 
 ### Backend Core
 
@@ -932,6 +957,7 @@ The AWS docs indicate a production target of:
 - Agent configs in `agents.json`.
 - LiveKit room token issuance.
 - MCP server and agent delegation behavior.
+- All current enforcement of x402 pass expiry/usage and transaction-proof replay prevention.
 
 ### Important Hardening Areas
 
@@ -942,10 +968,13 @@ The AWS docs indicate a production target of:
 - Keep Murf, LiveKit, OpenAI, and wallet/private keys out of frontend env.
 - Remote Walrus deletion currently requires wallet-signed Sui operations and is not implemented by the backend helper.
 - `agent_store.py` and `usage_store.py` are JSON-file stores; use a real database or durable shared volume for multi-instance deployment.
+- Authenticate and authorize Walrus blob/manifest delivery before treating stored voice assets as private.
+- Add an enforced payment gate for `join`/`talk` if agent-level x402 and per-call pricing are intended to charge callers.
+- Use the selected agent provider and registered voice bundle in the LiveKit worker, or remove those fields from the deployment UI until they are supported.
 
 ## Legacy `agentmcp/backend`
 
-`agentmcp/backend/` is retained but is not the active backend described by the root README or deployment files. It includes:
+`agentmcp/backend/` is retained but is not the active backend used by the root deployment files. It includes:
 
 - A separate FastAPI app titled `SwaraOS API`.
 - SQLite persistence in `storage/voicevault.db`.
@@ -962,6 +991,8 @@ Treat it as historical/prototype code unless a task explicitly targets it.
 - Frontend registration prevents more than one voice per wallet, but the Move contract itself does not enforce uniqueness.
 - The backend TTS path verifies bundle files but uses Murf for actual output; the stored embedding is not yet used for synthesis.
 - `murfVoiceClone` currently ignores the uploaded sample and performs regular Murf TTS.
+- The LiveKit agent worker uses `OPENAI_REALTIME_VOICE`, not the registered creator voice; the selected `llm_provider` and agent x402 fields are not enforced by the live-call runtime.
+- Walrus bundle blobs are currently retrievable through the configured aggregator/proxy; access control applies to the TTS endpoint, not confidential asset delivery.
 - `payment::pay_with_royalty_split` mints `LicensePass` in the current source, but frontend code still supports older deployments that did not.
 - The Move test file is a placeholder and does not currently exercise contract behavior.
 - Several older docs contain stale diagrams or mojibake; prefer this document plus current source files for architecture decisions.
