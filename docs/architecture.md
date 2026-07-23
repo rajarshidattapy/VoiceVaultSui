@@ -4,7 +4,7 @@ This document describes the current repository architecture for VoiceVault Sui. 
 
 VoiceVault is a Web3 voice marketplace and voice-agent platform on Sui. Creators process a voice sample, store the generated voice bundle through the backend's Walrus integration, register the bundle URI on-chain, sell access in the marketplace, and can configure LiveKit-based voice agents from their registered voice metadata.
 
-This is an implementation document, not a product roadmap. The current voice bundle still contains a placeholder embedding, but marketplace TTS and direct cloning now use the local LuxTTS/ZipVoice runtime in `backend/tts`. LiveKit agents continue to speak with the configured OpenAI Realtime voice rather than the creator's uploaded voice. Those boundaries are called out below.
+This is an implementation document, not a product roadmap. The current voice bundle still contains a placeholder embedding, but marketplace TTS, direct cloning, and deployed-agent speech use the local LuxTTS/ZipVoice runtime in `backend/tts`. For live calls, OpenAI Realtime handles the conversation in text-only output mode while LuxTTS emits the creator-cloned audio. Those boundaries are called out below.
 
 ## System At A Glance
 
@@ -38,7 +38,7 @@ FastAPI backend
         +---- starts locally --> swaraos_mcp_server.py
         |
         +---- starts locally --> agent_worker.py
-                                OpenAI Realtime voice agent
+                                OpenAI Realtime (text) + LuxTTS creator voice
 ```
 
 The active runtime is centered on:
@@ -70,7 +70,8 @@ VoiceVaultSui/
     agent_store.py            JSON-backed deployed-agent store
     agent_index.py            Search/discovery over deployed agents
     livekit_service.py        LiveKit tokens, dispatch, room helpers
-    agent_worker.py           LiveKit/OpenAI realtime voice-agent worker
+    livekit_lux_tts.py        Walrus preview.wav -> LuxTTS -> LiveKit audio adapter
+    agent_worker.py           LiveKit/OpenAI Realtime text-agent worker
     swaraos_mcp_server.py     MCP server exposing agent network tools
     shelby.py                 Legacy wrapper over Walrus helpers
     requirements.txt
@@ -265,7 +266,8 @@ The backend configures CORS from `CORS_ORIGINS`, `CORS_ALLOW_CREDENTIALS`, and `
 | `agent_store.py` | JSON agent configs in `storage/agents.json` |
 | `agent_index.py` | Token-based live-agent discovery |
 | `livekit_service.py` | LiveKit tokens, agent dispatch, participant removal |
-| `agent_worker.py` | LiveKit worker using OpenAI Realtime and optional MCP tools |
+| `livekit_lux_tts.py` | Loads a deployed agent's Walrus `preview.wav`, clones responses with local LuxTTS, and supplies PCM audio to LiveKit |
+| `agent_worker.py` | LiveKit worker using OpenAI Realtime text output, creator-voice LuxTTS, and optional MCP tools |
 | `swaraos_mcp_server.py` | MCP server for agent discovery, delegation, and room invitation |
 | `shelby.py` | Backward-compatible import wrapper |
 
@@ -285,7 +287,7 @@ The backend then:
 2. Calls `voice_model.process_voice_model`.
 3. Normalizes audio with FFmpeg to 16 kHz mono WAV if FFmpeg is installed.
 4. Generates a deterministic hash-based placeholder embedding.
-5. Creates a bundle:
+5. Creates a bundle, including a valid WAV `preview.wav` capped at the first five seconds. LuxTTS uses this preview as its reference sample; it is not a raw byte slice.
    - `embedding.bin`
    - `config.json`
    - `meta.json`
@@ -383,14 +385,16 @@ After access passes, the backend verifies that `embedding.bin`, `config.json`, a
 
 LuxTTS requires these locally provisioned directories: `VOICEVAULT_TTS_MODEL_PATH` for its checkpoint/vocoder/token files and `VOICEVAULT_TTS_ASR_MODEL_PATH` for the prompt-transcription model. The API deliberately fails with HTTP 503 when either runtime is unavailable; it does not fall back to a hosted TTS provider.
 
+For direct cloning on `/upload`, the browser posts multipart `audio` and `text` to `/api/tts/clone`. The API writes the reference sample to a temporary WAV, invokes the same local runtime, returns the generated WAV, and removes the temporary file.
+
 ### AI Execution Split
 
-The app has two separate AI paths. They share creator/agent metadata, but only the marketplace/direct-clone path uses the stored reference audio for voice cloning today.
+The app has two AI paths. Both use the stored reference audio for cloning, while the LiveKit path additionally uses OpenAI Realtime for low-latency conversation handling.
 
 | Path | Input | Active model/service | Output | What the Walrus voice bundle contributes today |
 | --- | --- | --- | --- | --- |
 | Marketplace TTS | Text plus an authorized `walrus://` URI | Local LuxTTS/ZipVoice runtime | 48 kHz WAV from `/api/tts/generate` | The bundle's `preview.wav` is the clone reference; `embedding.bin` is checked for bundle completeness but is not model input |
-| Live voice agent | A LiveKit room's standard-participant audio | OpenAI Realtime through `livekit-plugins-openai` | LiveKit agent audio and conversation | `voice_name` is placed in instructions; the bundle itself is not loaded or used for speech |
+| Live voice agent | A LiveKit room's standard-participant audio | OpenAI Realtime in text-only mode plus local LuxTTS | LiveKit agent audio and conversation | The worker downloads the configured bundle's `preview.wav` once at job start and uses it as the LuxTTS clone reference for every response |
 
 Voice processing is likewise deterministic preparation rather than model training: FFmpeg normalization is attempted, then `voice_model.py` derives a SHA-256-based 256-float placeholder embedding. This provides a stable bundle shape for the marketplace but is not a trainable or production speaker representation.
 
@@ -438,7 +442,7 @@ Agents are created through `POST /api/agent/create`. The backend stores configs 
 
 Deployment flow:
 
-1. Frontend creates an agent config.
+1. `/deploy` reads the creator's owned on-chain `VoiceIdentity` and sends its `model_uri` as `voice_uri` with the agent config.
 2. Frontend calls `POST /api/agent/deploy/{agent_id}`.
 3. Backend prepares a LiveKit room token and join URL.
 4. Backend ensures the MCP server is running unless disabled.
@@ -451,13 +455,41 @@ LiveKit is optional at this boundary. If LiveKit credentials are absent, the API
 `agent_worker.py` registers a named LiveKit agent server. It:
 
 - Loads agent config from `agents.json`.
-- Uses OpenAI Realtime via `livekit-plugins-openai`.
+- Requires the config's `voice_uri` to be a `walrus://` URI, then downloads and caches that bundle's `preview.wav` before the call starts.
+- Uses OpenAI Realtime via `livekit-plugins-openai` with `modalities=["text"]`; Realtime continues to receive caller audio and produce the agent response text, but never publishes its fixed provider voice.
+- Passes response text to `WalrusLuxTTS`, which calls `tts_service.synthesize` with the cached creator reference, decodes the returned 16-bit WAV, and publishes PCM frames through the LiveKit TTS pipeline.
 - Builds prompt instructions from the agent config.
 - Optionally connects to the MCP server.
 - Provides a `transfer_call_to_agent` tool for live handoff.
 - Can park the source agent silently after a handoff.
 
-The runtime always constructs `lk_openai.realtime.RealtimeModel(voice=OPENAI_REALTIME_VOICE)`. The user-selected `llm_provider` is stored in the agent configuration but is not used to select the active LiveKit model. Similarly, `voice_uri`, `voice_id`, and `voice_name` are stored; only `voice_name` currently appears in the agent instructions. The worker does not download the Walrus bundle or synthesize with the creator's LuxTTS voice.
+The runtime constructs `lk_openai.realtime.RealtimeModel(model=OPENAI_REALTIME_MODEL, modalities=["text"])` and `WalrusLuxTTS(voice_uri=...)`. There is no `OPENAI_REALTIME_VOICE` fallback. If the bundle lacks a readable `preview.wav`, the worker refuses that job instead of speaking with an unrelated voice. The user-selected `llm_provider` is still stored in the agent configuration but is not used to select the active LiveKit model.
+
+The frontend gets `voice_uri` from the creator's owned `VoiceIdentity.model_uri`, and the worker uses that persisted URI. The create endpoint currently does not authenticate the JSON request or independently re-query Sui at creation time; production deployment should add wallet-signature authentication and server-side verification that the submitted VoiceIdentity belongs to `owner` before trusting the stored config.
+
+#### Creator-Voice LiveKit Data Flow
+
+```text
+Sui VoiceIdentity.model_uri = walrus://{voice-manifest}
+  |
+  | /deploy reads the creator-owned VoiceIdentity
+  v
+agents.json: { voice_uri, voice_id, voice_name, ... }
+  |
+  | LiveKit dispatch into vv-{agent_id}
+  v
+agent_worker.py
+  |
+  | WalrusLuxTTS preloads preview.wav once per worker job
+  v
+OpenAI Realtime: caller audio -> response text only
+  |
+  | tts_service.synthesize(response_text, cached_preview_wav)
+  v
+local LuxTTS -> 48 kHz PCM WAV -> LiveKit agent audio track
+```
+
+The cached reference is held only for the lifetime of that LiveKit agent job. The live-call adapter consumes only `preview.wav`; unlike marketplace TTS, it does not require `embedding.bin` or `config.json` as model input. `tts_service` serializes local model inference with its process-level lock, so multiple simultaneous agents share one loaded LuxTTS model per worker process.
 
 `swaraos_mcp_server.py` exposes MCP tools:
 
@@ -687,6 +719,8 @@ POST /api/agent/deploy/{agent_id}
   v
 agent status = live
   |
+  | worker loads voice_uri -> Walrus preview.wav
+  | OpenAI Realtime text -> LuxTTS cloned LiveKit audio
   v
 POST /api/agent/talk/{agent_id}
   |
@@ -859,7 +893,7 @@ LIVEKIT_AGENT_EXTERNAL=
 LIVEKIT_AGENT_MANAGED=
 LIVEKIT_WORKER_STARTUP_GRACE_SECONDS=
 OPENAI_API_KEY=
-OPENAI_REALTIME_VOICE=
+OPENAI_REALTIME_MODEL=
 AGENT_DELEGATION_MODEL=
 AGENT_NETWORK_MCP_ENABLED=
 AGENT_NETWORK_MCP_URL=
@@ -909,10 +943,14 @@ npm run dev
 `render.yaml` deploys a Docker web service named `voicevault-backend` using the root `Dockerfile`. That Dockerfile:
 
 - Starts from `python:3.11-slim`.
-- Installs `backend/requirements.txt`.
+- Installs `backend/requirements.txt`, including `backend/tts/requirements.txt`, plus FFmpeg/audio and Git system dependencies.
 - Copies `backend/`.
 - Sets `PORT=8080`.
 - Runs `python server.py`.
+
+The image contains the inference code but not the LuxTTS or ASR weights. Mount/provision the model directories and set `VOICEVAULT_TTS_MODEL_PATH` plus `VOICEVAULT_TTS_ASR_MODEL_PATH` in the deployment environment.
+
+When the LiveKit worker runs as a separate process or container, it needs the same local model directories and the Walrus configuration as the API. In particular, provide `VOICEVAULT_TTS_MODEL_PATH`, `VOICEVAULT_TTS_ASR_MODEL_PATH`, `VOICEVAULT_TTS_DEVICE`, `WALRUS_STORAGE_MODE`, and `WALRUS_AGGREGATOR_URL` to the worker. Otherwise an agent can join LiveKit but cannot fetch its creator reference or synthesize its voice.
 
 ### Frontend Hosting
 
@@ -934,6 +972,8 @@ The AWS docs indicate a production target of:
 - Frontend: Amplify Hosting.
 - Secrets: AWS Secrets Manager.
 - Runtime persistence: EFS.
+
+The ECS task example mounts EFS at `/var/lib/voicevault` for both the API and agent worker so they can share agent records and locally provisioned model directories. Its TTS device is set to `cpu`, because standard Fargate tasks do not provide CUDA GPUs; increase task CPU/memory or use a GPU-capable runtime when LuxTTS latency or throughput requires it.
 
 ## Security And Trust Boundaries
 
@@ -966,7 +1006,7 @@ The AWS docs indicate a production target of:
 - `agent_store.py` and `usage_store.py` are JSON-file stores; use a real database or durable shared volume for multi-instance deployment.
 - Authenticate and authorize Walrus blob/manifest delivery before treating stored voice assets as private.
 - Add an enforced payment gate for `join`/`talk` if agent-level x402 and per-call pricing are intended to charge callers.
-- Use the selected agent provider and registered voice bundle in the LiveKit worker, or remove those fields from the deployment UI until they are supported.
+- Authenticate agent creation and verify the submitted VoiceIdentity's on-chain owner and `model_uri` server-side before persisting an agent config.
 
 ## Legacy `backend/agentmcp/backend`
 
@@ -986,7 +1026,7 @@ Treat it as historical/prototype code unless a task explicitly targets it.
 - Active marketplace discovery is chain-derived, not database-derived.
 - Frontend registration prevents more than one voice per wallet, but the Move contract itself does not enforce uniqueness.
 - The backend TTS path verifies bundle files and passes `preview.wav` to the local LuxTTS cloner. The stored placeholder embedding is not used for synthesis.
-- The LiveKit agent worker uses `OPENAI_REALTIME_VOICE`, not the registered creator voice; the selected `llm_provider` and agent x402 fields are not enforced by the live-call runtime.
+- The LiveKit agent worker uses the deployed config's Walrus `preview.wav` with local LuxTTS. OpenAI Realtime is text-only in this path, so it does not select or emit a fixed OpenAI voice. The selected `llm_provider` and agent x402 fields are not enforced by the live-call runtime.
 - Walrus bundle blobs are currently retrievable through the configured aggregator/proxy; access control applies to the TTS endpoint, not confidential asset delivery.
 - `payment::pay_with_royalty_split` mints `LicensePass` in the current source, but frontend code still supports older deployments that did not.
 - The Move test file is a placeholder and does not currently exercise contract behavior.
@@ -1004,7 +1044,7 @@ npm run build
 
 ```powershell
 cd backend
-python -m py_compile server.py walrus.py voice_model.py agent_store.py usage_store.py livekit_service.py
+python -m py_compile server.py walrus.py voice_model.py tts_service.py livekit_lux_tts.py agent_worker.py agent_store.py usage_store.py livekit_service.py
 ```
 
 ```powershell

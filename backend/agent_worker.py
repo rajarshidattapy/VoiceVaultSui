@@ -41,6 +41,7 @@ from livekit.agents import Agent, AgentServer, AgentSession, function_tool
 from livekit.agents.llm import StopResponse, ToolError
 from livekit.agents.voice.room_io import RoomInputOptions
 from livekit.plugins import openai as lk_openai
+from livekit_lux_tts import WalrusLuxTTS
 
 try:
     import mcp.client.streamable_http as mcp_streamable_http
@@ -62,7 +63,7 @@ logger = logging.getLogger("voicevault-agent")
 
 AGENTS_FILE = STORAGE_DIR / "agents.json"
 LIVEKIT_AGENT_NAME = os.getenv("LIVEKIT_AGENT_NAME", "swaraos-voice-agent")
-OPENAI_REALTIME_VOICE = os.getenv("OPENAI_REALTIME_VOICE", "coral")
+OPENAI_REALTIME_MODEL = os.getenv("OPENAI_REALTIME_MODEL", "gpt-realtime")
 AGENT_NETWORK_MCP_URL = os.getenv("AGENT_NETWORK_MCP_URL", "http://127.0.0.1:8001/sse")
 BACKEND_API_URL = os.getenv("BACKEND_URL", "http://localhost:8000").rstrip("/")
 MAX_DELEGATION_DEPTH = int(os.getenv("MAX_DELEGATION_DEPTH", "2"))
@@ -491,9 +492,39 @@ async def voicevault_agent(ctx: agents.JobContext):
     agent_name = config.get("agent_name", "VoiceVault Agent")
     user_identity = metadata.get("user_identity", "")
     source_agent_id = config.get("id") or target_agent_id or metadata.get("agent_id") or ""
+    voice_uri = str(config.get("voice_uri") or "").strip()
+
+    if not voice_uri:
+        logger.error(
+            "Refusing to start agent '%s' (id=%s): its deployed config has no registered voice_uri",
+            agent_name,
+            source_agent_id or "unknown",
+        )
+        ctx.shutdown()
+        return
+
+    try:
+        creator_tts = WalrusLuxTTS(voice_uri=voice_uri, agent_id=source_agent_id)
+        await creator_tts.preload_reference()
+    except Exception as exc:
+        logger.exception(
+            "Refusing to start agent '%s' (id=%s): creator voice reference is unavailable: %s",
+            agent_name,
+            source_agent_id or "unknown",
+            exc,
+        )
+        ctx.shutdown()
+        return
 
     session = AgentSession(
-        llm=lk_openai.realtime.RealtimeModel(voice=OPENAI_REALTIME_VOICE),
+        # Realtime still handles live listening/reasoning, but text-only output
+        # ensures no fixed OpenAI voice is published. WalrusLuxTTS speaks every
+        # response using the creator's registered Walrus preview.wav instead.
+        llm=lk_openai.realtime.RealtimeModel(
+            model=OPENAI_REALTIME_MODEL,
+            modalities=["text"],
+        ),
+        tts=creator_tts,
     )
 
     await ctx.connect()

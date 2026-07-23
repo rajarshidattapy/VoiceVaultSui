@@ -6,8 +6,8 @@ httpx>=0.27.1,<1
 python-multipart==0.0.9
 requests
 livekit-api
-livekit-agents>=1.0.0
-livekit-plugins-openai
+livekit-agents>=1.5.0,<2
+livekit-plugins-openai>=1.5.0,<2
 openai
 mcp[cli]==1.12.4
 -r tts/requirements.txt
