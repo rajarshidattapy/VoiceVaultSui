@@ -31,7 +31,15 @@ export const BACKEND_CONFIG = {
 };
 
 export const backendApi = {
-  async generateTTS(modelUri: string, text: string, requesterAccount?: string, voiceObjectId?: string): Promise<Blob> {
+  async generateTTS(
+    modelUri: string,
+    text: string,
+    requesterAccount?: string,
+    voiceObjectId?: string,
+    purchaseTxHash?: string,
+    creatorAddress?: string,
+    murfVoiceId?: string,
+  ): Promise<Blob> {
     const response = await fetch(`${BACKEND_CONFIG.BASE_URL}${BACKEND_CONFIG.ENDPOINTS.UNIFIED_TTS}`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
@@ -40,6 +48,9 @@ export const backendApi = {
         text,
         ...(requesterAccount ? { requesterAccount } : {}),
         ...(voiceObjectId ? { voiceObjectId } : {}),
+        ...(purchaseTxHash ? { purchaseTxHash } : {}),
+        ...(creatorAddress ? { creatorAddress } : {}),
+        ...(murfVoiceId ? { murfVoiceId } : {}),
       }),
     });
 
@@ -93,8 +104,8 @@ export const backendApi = {
   },
 
   async uploadToWalrus(
-    account: string,
-    voiceId: string,
+    accountOrUri: string,
+    voiceIdOrAccount: string,
     bundleFiles: {
       embedding: Blob;
       config: Blob;
@@ -110,12 +121,18 @@ export const backendApi = {
       formData.append("preview.wav", bundleFiles.preview, "preview.wav");
     }
 
+    const headers: Record<string, string> = {};
+    if (accountOrUri.startsWith("walrus://")) {
+      headers["X-Walrus-Uri"] = accountOrUri;
+      headers["X-Sui-Account"] = voiceIdOrAccount;
+    } else {
+      headers["X-Sui-Account"] = accountOrUri;
+      headers["X-Voice-Id"] = voiceIdOrAccount;
+    }
+
     const response = await fetch(`${BACKEND_CONFIG.BASE_URL}${BACKEND_CONFIG.ENDPOINTS.WALRUS_UPLOAD}`, {
       method: "POST",
-      headers: {
-        "X-Sui-Account": account,
-        "X-Voice-Id": voiceId,
-      },
+      headers,
       body: formData,
     });
 
@@ -126,73 +143,18 @@ export const backendApi = {
     return response.json();
   },
 
-  async downloadFromWalrus(uri: string, filename: string, requesterAccount?: string): Promise<ArrayBuffer> {
-    const response = await fetch(`${BACKEND_CONFIG.BASE_URL}${BACKEND_CONFIG.ENDPOINTS.WALRUS_DOWNLOAD}`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ uri, filename, requesterAccount }),
-    });
-
-    if (!response.ok) {
-      await readError(response, "Walrus download failed");
-    }
-
-    return response.arrayBuffer();
-  },
-
-  async deleteFromWalrus(uri: string, account: string) {
-    const response = await fetch(`${BACKEND_CONFIG.BASE_URL}${BACKEND_CONFIG.ENDPOINTS.WALRUS_DELETE}`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ uri, account }),
-    });
-
-    if (!response.ok) {
-      await readError(response, "Walrus delete failed");
-    }
-
-    return response.json();
-  },
-
-  async uploadToWalrus(
+  async downloadFromWalrus(
     uri: string,
-    account: string,
-    bundleFiles: {
-      embedding: Blob;
-      config: Blob;
-      meta: Blob;
-      preview?: Blob;
-    },
-  ) {
-    const formData = new FormData();
-    formData.append("embedding.bin", bundleFiles.embedding, "embedding.bin");
-    formData.append("config.json", bundleFiles.config, "config.json");
-    formData.append("meta.json", bundleFiles.meta, "meta.json");
-    if (bundleFiles.preview) {
-      formData.append("preview.wav", bundleFiles.preview, "preview.wav");
-    }
-
-    const response = await fetch(`${BACKEND_CONFIG.BASE_URL}${BACKEND_CONFIG.ENDPOINTS.WALRUS_UPLOAD}`, {
-      method: "POST",
-      headers: {
-        "X-Walrus-Uri": uri,
-        "X-Sui-Account": account,
-      },
-      body: formData,
-    });
-
-    if (!response.ok) {
-      await readError(response, "Walrus upload failed");
-    }
-
-    return response.json();
-  },
-
-  async downloadFromWalrus(uri: string, filename: string, requesterAccount?: string): Promise<ArrayBuffer> {
+    filename: string,
+    requesterAccount?: string,
+    voiceObjectId?: string,
+    purchaseTxHash?: string,
+    creatorAddress?: string
+  ): Promise<ArrayBuffer> {
     const response = await fetch(`${BACKEND_CONFIG.BASE_URL}${BACKEND_CONFIG.ENDPOINTS.WALRUS_DOWNLOAD}`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ uri, filename, requesterAccount }),
+      body: JSON.stringify({ uri, filename, requesterAccount, voiceObjectId, purchaseTxHash, creatorAddress }),
     });
 
     if (!response.ok) {
@@ -216,12 +178,16 @@ export const backendApi = {
     return response.json();
   },
 
-  async downloadModelFile(uri: string, filename: string, requesterAccount?: string): Promise<ArrayBuffer> {
+  async downloadModelFile(
+    uri: string,
+    filename: string,
+    requesterAccount?: string,
+    voiceObjectId?: string,
+    purchaseTxHash?: string,
+    creatorAddress?: string
+  ): Promise<ArrayBuffer> {
     if (uri.startsWith("walrus://")) {
-      return backendApi.downloadFromWalrus(uri, filename, requesterAccount);
-    }
-    if (uri.startsWith("walrus://")) {
-      return backendApi.downloadFromWalrus(uri, filename, requesterAccount);
+      return backendApi.downloadFromWalrus(uri, filename, requesterAccount, voiceObjectId, purchaseTxHash, creatorAddress);
     }
     throw new Error(`Unsupported model URI format: ${uri}`);
   },

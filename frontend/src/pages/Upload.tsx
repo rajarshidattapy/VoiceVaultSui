@@ -10,15 +10,27 @@ import { useState, useRef, useEffect } from "react";
 import { Helmet } from "react-helmet-async";
 import { toast } from "sonner";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
-import { getPurchasedVoices, removePurchasedVoiceByUri } from "@/lib/purchasedVoices";
+import { getPurchasedVoices, PURCHASED_VOICES_EVENT, removePurchasedVoiceByUri } from "@/lib/purchasedVoices";
 import { useSuiWallet } from "@/hooks/useSuiWallet";
 import { useVoiceMetadata } from "@/hooks/useVoiceMetadata";
+
+const getReadableErrorMessage = (error: unknown, fallback: string): string => {
+  if (error instanceof Error && error.message) return error.message;
+  if (typeof error === "string" && error.trim()) return error;
+  if (error && typeof error === "object" && "message" in error) {
+    const message = (error as { message?: unknown }).message;
+    if (typeof message === "string" && message.trim()) {
+      return message.replace(/<[^>]*>/g, " ").replace(/\s+/g, " ").trim();
+    }
+  }
+  return fallback;
+};
 
 const Upload = () => {
   // ------------------- TTS with Purchased Voices -------------------
   const [ttsText, setTtsText] = useState("");
   const [selectedPurchasedVoice, setSelectedPurchasedVoice] = useState<string>("");
-  const [purchasedVoices, setPurchasedVoices] = useState<Array<{ voiceId: string; name: string; modelUri: string; owner: string; isOwned?: boolean }>>([]);
+  const [purchasedVoices, setPurchasedVoices] = useState<Array<{ voiceId: string; objectId?: string; name: string; modelUri: string; owner: string; txHash?: string; isOwned?: boolean }>>([]);
   const [ttsLoading, setTtsLoading] = useState(false);
   const [ttsAudioUrl, setTtsAudioUrl] = useState<string | null>(null);
 
@@ -39,7 +51,7 @@ const Upload = () => {
   const [autoName, setAutoName] = useState("");
   const [autoModelUri, setAutoModelUri] = useState("");
 
-  // ------------------- Voice Cloning (Chatterbox) -------------------
+  // ------------------- Voice Cloning (Murf) -------------------
   const [cloneRecording, setCloneRecording] = useState(false);
   const [cloneRecordedAudio, setCloneRecordedAudio] = useState<File | null>(null);
   const [cloneText, setCloneText] = useState("");
@@ -53,13 +65,19 @@ const Upload = () => {
   useEffect(() => {
     const loadAvailableVoices = async () => {
       try {
-        const allVoices: Array<{ voiceId: string; name: string; modelUri: string; owner: string; isOwned?: boolean }> = [];
+        const allVoices: Array<{ voiceId: string; objectId?: string; name: string; modelUri: string; owner: string; txHash?: string; isOwned?: boolean }> = [];
 
-        const checkModelUriExists = async (uri: string, requesterAccount?: string): Promise<boolean> => {
-          if (!uri.startsWith("walrus://") && !uri.startsWith("walrus://")) return true;
+        const checkModelUriExists = async (
+          uri: string,
+          requesterAccount?: string,
+          voiceObjectId?: string,
+          purchaseTxHash?: string,
+          creatorAddress?: string
+        ): Promise<boolean> => {
+          if (!uri.startsWith("walrus://")) return true;
           try {
             const { backendApi } = await import("@/lib/api");
-            await backendApi.downloadModelFile(uri, "meta.json", requesterAccount);
+            await backendApi.downloadModelFile(uri, "meta.json", requesterAccount, voiceObjectId, purchaseTxHash, creatorAddress);
             return true;
           } catch {
             return false;
@@ -67,10 +85,11 @@ const Upload = () => {
         };
 
         if (ownVoiceMetadata && address) {
-          const exists = await checkModelUriExists(ownVoiceMetadata.modelUri, address.toString());
+          const exists = await checkModelUriExists(ownVoiceMetadata.modelUri, address.toString(), ownVoiceMetadata.objectId);
           if (exists) {
             allVoices.push({
               voiceId: ownVoiceMetadata.voiceId,
+              objectId: ownVoiceMetadata.objectId,
               name: ownVoiceMetadata.name,
               modelUri: ownVoiceMetadata.modelUri,
               owner: ownVoiceMetadata.owner,
@@ -79,11 +98,12 @@ const Upload = () => {
           }
         }
 
-        const purchased = getPurchasedVoices();
+        const purchased = getPurchasedVoices(address?.toString());
         for (const v of purchased) {
-          const exists = await checkModelUriExists(v.modelUri, address?.toString());
+          const voiceObjectId = v.objectId || v.voiceId;
+          const exists = await checkModelUriExists(v.modelUri, address?.toString(), voiceObjectId, v.txHash, v.owner);
           if (exists) {
-            allVoices.push({ voiceId: v.voiceId, name: v.name, modelUri: v.modelUri, owner: v.owner, isOwned: false });
+            allVoices.push({ voiceId: v.voiceId, objectId: voiceObjectId, name: v.name, modelUri: v.modelUri, owner: v.owner, txHash: v.txHash, isOwned: false });
           } else {
             removePurchasedVoiceByUri(v.modelUri);
           }
@@ -109,9 +129,11 @@ const Upload = () => {
       if (e.key === "voicevault_purchased_voices") loadAvailableVoices();
     };
     window.addEventListener('storage', handleStorageChange);
+    window.addEventListener(PURCHASED_VOICES_EVENT, loadAvailableVoices);
     const interval = setInterval(loadAvailableVoices, 5000);
     return () => {
       window.removeEventListener('storage', handleStorageChange);
+      window.removeEventListener(PURCHASED_VOICES_EVENT, loadAvailableVoices);
       clearInterval(interval);
     };
   }, [ownVoiceMetadata, address, selectedPurchasedVoice]);
@@ -151,34 +173,25 @@ const Upload = () => {
     setTtsLoading(true);
     try {
       const { backendApi } = await import("@/lib/api");
-      const { chatterboxVoiceClone } = await import("@/lib/chatterbox");
-      toast.info("Fetching voice model and generating speech via Chatterbox...");
+      toast.info("Generating speech via Murf...");
+      const selectedVoice = purchasedVoices.find((voice) => voice.modelUri === selectedPurchasedVoice);
 
-      let previewBuffer;
-      try {
-        previewBuffer = await backendApi.downloadModelFile(
-          selectedPurchasedVoice,
-          "preview.wav",
-          address.toString()
-        );
-      } catch (downloadErr: any) {
-        console.error("Download error:", downloadErr);
-        toast.error(
-          downloadErr.message.includes("File not found") 
-            ? "Voice model files are not complete. Please reprocess the voice in Step 1."
-            : `Failed to fetch voice model: ${downloadErr.message}`
-        );
-        setTtsLoading(false);
-        return;
-      }
-
-      const previewBlob = new Blob([previewBuffer], { type: "audio/wav" });
-      const audioBlob = await chatterboxVoiceClone(ttsText, previewBlob);
+      const audioBlob = await backendApi.generateTTS(
+        selectedPurchasedVoice,
+        ttsText,
+        address.toString(),
+        selectedVoice?.objectId || selectedVoice?.voiceId,
+        selectedVoice?.txHash,
+        selectedVoice?.owner
+      );
       setTtsAudioUrl(URL.createObjectURL(audioBlob));
       toast.success("Speech generated successfully!");
     } catch (err: any) {
       console.error("TTS error:", err);
-      toast.error(err.message || "Failed to generate speech");
+      toast.error("TTS generation failed", {
+        description: getReadableErrorMessage(err, "Failed to generate speech"),
+        duration: 10000,
+      });
     } finally {
       setTtsLoading(false);
     }
@@ -239,20 +252,24 @@ const Upload = () => {
     }
   };
 
-  // ------------------- Clone Voice & Generate (Chatterbox) -------------------
+  // ------------------- Clone Voice & Generate (Murf) -------------------
   const handleCloneAndGenerate = async () => {
     if (!cloneRecordedAudio) { toast.error("Please record or upload a voice sample first"); return; }
     if (!cloneText.trim()) { toast.error("Please enter the text you want your voice to say"); return; }
 
     setCloneLoading(true);
     try {
-      const { chatterboxVoiceClone } = await import("@/lib/chatterbox");
+      const { murfVoiceClone } = await import("@/lib/murfVoice");
       toast.info("Cloning your voice and generating speech...");
-      const audioBlob = await chatterboxVoiceClone(cloneText.trim(), cloneRecordedAudio);
+      const audioBlob = await murfVoiceClone(cloneText.trim(), cloneRecordedAudio);
       setCloneOutputAudio(URL.createObjectURL(audioBlob));
       toast.success("Done! Your voice is speaking the text you wrote.");
     } catch (err: any) {
-      toast.error(err.message || "Failed to clone voice and generate speech");
+      console.error("Voice clone error:", err);
+      toast.error("Voice cloning failed", {
+        description: getReadableErrorMessage(err, "Failed to clone voice and generate speech"),
+        duration: 10000,
+      });
     } finally {
       setCloneLoading(false);
     }

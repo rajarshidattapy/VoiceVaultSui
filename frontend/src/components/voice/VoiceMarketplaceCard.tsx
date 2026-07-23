@@ -9,15 +9,17 @@ import { Loader2, ShoppingCart, Coins, Play } from "lucide-react";
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { formatAddress } from "@/lib/sui";
 import { isWalrusUri } from "@/lib/walrus";
-import { isVoicePurchased } from "@/lib/purchasedVoices";
+import { isVoicePurchased, PURCHASED_VOICES_EVENT } from "@/lib/purchasedVoices";
 import { PayPerUseButton } from "@/components/x402/PayPerUseButton";
+import { useSuiWallet } from "@/hooks/useSuiWallet";
 
 interface VoiceMarketplaceCardProps {
   voice: VoiceWithWalrusMetadata;
-  onPaymentSuccess?: (txHash: string, voice: VoiceMetadata) => void;
+  onPaymentSuccess?: (txHash: string, voice: VoiceMetadata, metadata?: { mintsLicensePass: boolean }) => void;
 }
 
 export function VoiceMarketplaceCard({ voice, onPaymentSuccess }: VoiceMarketplaceCardProps) {
+  const { address } = useSuiWallet();
   const { payForInference, getPaymentBreakdown, isPaying } = usePayForInference();
   const [showPaymentDialog, setShowPaymentDialog] = useState(false);
   const [breakdown, setBreakdown] = useState<{
@@ -26,11 +28,28 @@ export function VoiceMarketplaceCard({ voice, onPaymentSuccess }: VoiceMarketpla
     royalty: number;
     creator: number;
   } | null>(null);
+  const [isPurchased, setIsPurchased] = useState(() =>
+    isVoicePurchased(voice.objectId, voice.owner, address || undefined)
+  );
 
   const price = voice.pricePerUse;
-  const isPurchased = isVoicePurchased(voice.voiceId, voice.owner);
   const isWalrus = isWalrusUri(voice.modelUri);
   const isLegacyWalrus = voice.modelUri.startsWith("walrus://");
+
+  useEffect(() => {
+    const updatePurchasedState = () => {
+      setIsPurchased(isVoicePurchased(voice.objectId, voice.owner, address || undefined));
+    };
+
+    updatePurchasedState();
+    window.addEventListener(PURCHASED_VOICES_EVENT, updatePurchasedState);
+    window.addEventListener("storage", updatePurchasedState);
+
+    return () => {
+      window.removeEventListener(PURCHASED_VOICES_EVENT, updatePurchasedState);
+      window.removeEventListener("storage", updatePurchasedState);
+    };
+  }, [voice.objectId, voice.owner, address]);
   
   // Fetch breakdown from backend when dialog opens, fallback to local calculation
   useEffect(() => {
@@ -70,9 +89,9 @@ export function VoiceMarketplaceCard({ voice, onPaymentSuccess }: VoiceMarketpla
       creatorAddress: voice.owner,
       amount: price,
       royaltyRecipient: voice.owner,
-      onSuccess: (txHash) => {
+      onSuccess: (txHash, metadata) => {
         if (onPaymentSuccess) {
-          onPaymentSuccess(txHash, voice);
+          onPaymentSuccess(txHash, voice, metadata);
         }
       },
     });

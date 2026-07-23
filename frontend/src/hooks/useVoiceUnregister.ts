@@ -3,6 +3,7 @@ import { useSignAndExecuteTransaction, useSuiClient } from "@mysten/dapp-kit";
 import { Transaction } from "@mysten/sui/transactions";
 import { useSuiWallet } from "./useSuiWallet";
 import { CONTRACTS } from "@/lib/contracts";
+import { assertOwnedVoiceObject, buildDeleteVoiceArguments } from "@/lib/voiceContract";
 import { toast } from "sonner";
 
 export function useVoiceUnregister() {
@@ -29,14 +30,14 @@ export function useVoiceUnregister() {
     setIsUnregistering(true);
 
     try {
+      await assertOwnedVoiceObject(suiClient, voiceObjectId, address);
+
       const tx = new Transaction();
+      const deleteArgs = await buildDeleteVoiceArguments(suiClient, tx, voiceObjectId);
 
       tx.moveCall({
         target: `${CONTRACTS.PACKAGE_ID}::${CONTRACTS.VOICE_IDENTITY.module}::delete_voice`,
-        arguments: [
-          tx.object(CONTRACTS.VOICE_REGISTRY_ID),
-          tx.object(voiceObjectId),
-        ],
+        arguments: deleteArgs,
       });
 
       toast.info("Please approve the transaction in your wallet...");

@@ -10,6 +10,10 @@ export interface AgentConfig {
   agent_name: string;
   template_id: string;
   system_prompt: string;
+  agent_description?: string;
+  skills?: string[];
+  language?: string;
+  endpoint?: string;
   llm_provider: string;
   price_per_call: number;
   voice_name: string;
@@ -27,6 +31,10 @@ export interface DeployResult {
   userToken: string;
   startCmd: string;
   liveKitConfigured: boolean;
+  workerRunning?: boolean;
+  agentDispatched?: boolean;
+  workerError?: string | null;
+  dispatchError?: string | null;
 }
 
 async function post(path: string, body?: object) {
@@ -68,6 +76,9 @@ export const agentApi = {
 
   delete: (agentId: string) => del(`/api/agent/${agentId}`),
 
-  join: (agentId: string, participantName: string): Promise<{ roomName: string; token: string; joinUrl: string; liveKitConfigured: boolean }> =>
+  join: (agentId: string, participantName: string): Promise<{ roomName: string; token: string; joinUrl: string; liveKitConfigured: boolean; workerRunning?: boolean; agentDispatched?: boolean }> =>
     post(`/api/agent/join/${agentId}`, { participantName }),
+
+  talk: (agentId: string, identity: string): Promise<{ success: boolean; roomName: string; token: string; joinUrl: string; liveKitConfigured: boolean; workerRunning?: boolean; agentDispatched?: boolean }> =>
+    post(`/api/agent/talk/${agentId}`, { identity }),
 };

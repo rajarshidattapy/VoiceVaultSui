@@ -1,6 +1,12 @@
 fastapi==0.115.0
-uvicorn[standard]==0.30.0
+starlette==0.38.6
+uvicorn[standard]>=0.31.1,<1
 python-dotenv==1.1.0
-httpx==0.27.0
+httpx>=0.27.1,<1
 python-multipart==0.0.9
+requests
 livekit-api
+livekit-agents>=1.0.0
+livekit-plugins-openai
+openai
+mcp[cli]==1.12.4
