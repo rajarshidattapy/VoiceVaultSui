@@ -3,6 +3,7 @@ import { useSignAndExecuteTransaction, useSuiClient } from "@mysten/dapp-kit";
 import { Transaction } from "@mysten/sui/transactions";
 import { useSuiWallet } from "./useSuiWallet";
 import { toast } from "sonner";
+import { BACKEND_CONFIG } from "@/lib/api";
 
 export interface X402PayOptions {
   voiceId: string;
@@ -19,7 +20,6 @@ export interface X402PayResult {
   usesRemaining: number;
 }
 
-const API_URL = import.meta.env.VITE_API_URL ?? "http://localhost:8000";
 const MIST_PER_SUI = 1_000_000_000;
 
 export function useX402Pay() {
@@ -53,7 +53,7 @@ export function useX402Pay() {
       try { await suiClient.waitForTransaction({ digest: txDigest }); } catch { /* ok */ }
 
       // Register with backend → get UsagePass
-      const resp = await fetch(`${API_URL}/api/x402/create-pass`, {
+      const resp = await fetch(`${BACKEND_CONFIG.BASE_URL}/api/x402/create-pass`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({

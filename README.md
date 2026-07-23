@@ -153,6 +153,17 @@ npm run dev
 
 Frontend usually runs on `http://localhost:5173`.
 
+## Deployment
+
+The active production deployment plan targets AWS:
+
+- Backend: Amazon ECS on AWS Fargate with API, MCP, and LiveKit worker containers
+- Frontend: AWS Amplify Hosting
+- Runtime secrets: AWS Secrets Manager
+- Persistent runtime state: Amazon EFS
+
+See [docs/AWS_DEPLOYMENT_PLAN.md](docs/AWS_DEPLOYMENT_PLAN.md).
+
 ## Main Workflows
 
 ### Register a Voice

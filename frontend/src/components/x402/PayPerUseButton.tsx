@@ -12,8 +12,7 @@ import { Textarea } from "@/components/ui/textarea";
 import { Badge } from "@/components/ui/badge";
 import { useX402Pay } from "@/hooks/useX402Pay";
 import { useSuiWallet } from "@/hooks/useSuiWallet";
-
-const API_URL = import.meta.env.VITE_API_URL ?? "http://localhost:8000";
+import { BACKEND_CONFIG } from "@/lib/api";
 
 interface PayPerUseButtonProps {
   voiceId: string;
@@ -60,7 +59,7 @@ export function PayPerUseButton({
     setError(null);
 
     try {
-      const resp = await fetch(`${API_URL}/api/tts/generate`, {
+      const resp = await fetch(`${BACKEND_CONFIG.BASE_URL}/api/tts/generate`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({

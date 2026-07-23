@@ -21,8 +21,9 @@ from urllib.parse import quote
 import httpx
 
 BACKEND_DIR = Path(__file__).resolve().parent
+STORAGE_BASE_DIR = Path(os.getenv("VOICEVAULT_STORAGE_DIR", str(BACKEND_DIR / "storage"))).expanduser()
 
-PORT = os.getenv("PORT", "3000")
+PORT = os.getenv("PORT", "8000")
 REMOTE_MODE = os.getenv("WALRUS_STORAGE_MODE", "local").lower() == "remote"
 PUBLISHER_URL = os.getenv("WALRUS_PUBLISHER_URL", "https://publisher.walrus-testnet.walrus.space").rstrip("/")
 AGGREGATOR_URL = os.getenv(
@@ -33,10 +34,10 @@ DEFAULT_EPOCHS = int(os.getenv("WALRUS_EPOCHS", "5"))
 DELETABLE = os.getenv("WALRUS_DELETABLE", "true").lower() == "true"
 MAX_BLOB_SIZE = int(os.getenv("WALRUS_MAX_BLOB_SIZE", str(10 * 1024 * 1024)))
 
-STORAGE_ROOT = BACKEND_DIR / "storage" / "walrus"
+STORAGE_ROOT = STORAGE_BASE_DIR / "walrus"
 BLOB_DIR = STORAGE_ROOT / "blobs"
 META_DIR = STORAGE_ROOT / "meta"
-SHELBY_STORAGE_ROOT = BACKEND_DIR / "storage" / "shelby"
+SHELBY_STORAGE_ROOT = STORAGE_BASE_DIR / "shelby"
 
 
 class WalrusFileNotFoundError(Exception):

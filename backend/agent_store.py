@@ -11,7 +11,9 @@ import uuid
 from pathlib import Path
 from typing import Dict, List, Optional
 
-AGENTS_FILE = Path(__file__).parent / "storage" / "agents.json"
+BACKEND_DIR = Path(__file__).parent
+STORAGE_DIR = Path(os.getenv("VOICEVAULT_STORAGE_DIR", str(BACKEND_DIR / "storage"))).expanduser()
+AGENTS_FILE = STORAGE_DIR / "agents.json"
 _lock = threading.Lock()
 
 

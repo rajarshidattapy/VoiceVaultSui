@@ -22,7 +22,8 @@ from dotenv import load_dotenv
 
 BACKEND_DIR = Path(__file__).resolve().parent
 load_dotenv(dotenv_path=BACKEND_DIR.parent / ".env")
-load_dotenv(dotenv_path=BACKEND_DIR / ".env", override=True)
+load_dotenv(dotenv_path=BACKEND_DIR / ".env")
+STORAGE_DIR = Path(os.getenv("VOICEVAULT_STORAGE_DIR", str(BACKEND_DIR / "storage"))).expanduser()
 
 missing = [
     name
@@ -59,7 +60,7 @@ logging.basicConfig(
 )
 logger = logging.getLogger("voicevault-agent")
 
-AGENTS_FILE = BACKEND_DIR / "storage" / "agents.json"
+AGENTS_FILE = STORAGE_DIR / "agents.json"
 LIVEKIT_AGENT_NAME = os.getenv("LIVEKIT_AGENT_NAME", "swaraos-voice-agent")
 OPENAI_REALTIME_VOICE = os.getenv("OPENAI_REALTIME_VOICE", "coral")
 AGENT_NETWORK_MCP_URL = os.getenv("AGENT_NETWORK_MCP_URL", "http://127.0.0.1:8001/sse")

@@ -1,11 +1,14 @@
 """JSON-backed store for x402 UsagePasses (local tracking)."""
 import json
+import os
 import threading
 import time
 import uuid
 from pathlib import Path
 
-USAGE_FILE = Path(__file__).parent / "storage" / "usage_passes.json"
+BACKEND_DIR = Path(__file__).parent
+STORAGE_DIR = Path(os.getenv("VOICEVAULT_STORAGE_DIR", str(BACKEND_DIR / "storage"))).expanduser()
+USAGE_FILE = STORAGE_DIR / "usage_passes.json"
 _lock = threading.Lock()
 
 

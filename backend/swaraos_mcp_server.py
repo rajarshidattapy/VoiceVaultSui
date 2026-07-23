@@ -15,7 +15,7 @@ BACKEND_DIR = Path(__file__).resolve().parent
 sys.path.insert(0, str(BACKEND_DIR))
 
 load_dotenv(dotenv_path=BACKEND_DIR.parent / ".env")
-load_dotenv(dotenv_path=BACKEND_DIR / ".env", override=True)
+load_dotenv(dotenv_path=BACKEND_DIR / ".env")
 
 import httpx
 from mcp.server.fastmcp import FastMCP

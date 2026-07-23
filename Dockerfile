@@ -19,9 +19,6 @@ RUN pip install --no-cache-dir -r requirements.txt
 # Copy backend application
 COPY backend/ .
 
-# Copy root .env if it exists (for production config)
-COPY .env* ./
-
 # Expose port (Render uses 10000, but FastAPI will read PORT env var)
 EXPOSE 8080
 
